@@ -11,6 +11,7 @@ from app_settings import initialize
 from endpoints import devices_bp, invocations_bp, simulator_bp, status_bp
 from env_secrets import get_env_secret
 from flask import Flask, Response, g, jsonify, redirect, request
+
 # The SDK imports an unused DynamoDB client that still requires a region.
 # This internal compatibility default is not an application setting.
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
@@ -145,9 +146,9 @@ class SkillRequestTrace:
         if environ.get('PATH_INFO') != '/' or environ.get('REQUEST_METHOD') != 'POST':
             return self.application(environ, start_response)
         trace_id = environ.get('HTTP_CF_RAY', 'direct')
-        logging.warning('Skill ingress ray=%s signed=%s', trace_id, bool(environ.get('HTTP_SIGNATURE')))
+        logging.getLogger(__name__).warning('Skill ingress ray=%s signed=%s', trace_id, bool(environ.get('HTTP_SIGNATURE')))
         def traced_start(status, headers, exc_info=None):
-            logging.warning('Skill response ray=%s status=%s', trace_id, status)
+            logging.getLogger(__name__).warning('Skill response ray=%s status=%s', trace_id, status)
             return start_response(status, headers, exc_info)
         return self.application(environ, traced_start)
 
@@ -212,6 +213,7 @@ def _ingress_response(response):
 
 # Reject other skills before capturing request payloads.
 from private_access import check_private_access
+
 app.before_request(check_private_access)
 
 # Capture incoming Alexa POST payloads so we can show them on the status page

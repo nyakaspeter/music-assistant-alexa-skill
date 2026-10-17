@@ -1026,8 +1026,9 @@ def test_status_preserves_connected_deployment_with_invalid_current_settings(
 def test_settings_save_only_invalidates_sign_in_when_oauth_config_changes(
     deployment, client, monkeypatch, changes, invalidated
 ):
-    from app import app
     from test_ingress import gateway
+
+    from app import app
 
     manager, _ = deployment
     app.extensions["skill_deployment"] = manager
@@ -1164,8 +1165,9 @@ def uncertain_import(manager):
 def test_owner_reconciliation_records_terminal_result_before_clearing(
     deployment, client, monkeypatch, result
 ):
-    from app import app
     from test_ingress import gateway
+
+    from app import app
 
     manager, amazon = deployment
     app.extensions["skill_deployment"] = manager
@@ -1287,8 +1289,9 @@ def test_slow_reconciliation_leaves_status_and_settings_responsive(
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    from app import app
     from test_ingress import gateway
+
+    from app import app
 
     manager, _ = deployment
     app.extensions["skill_deployment"] = manager
@@ -1462,7 +1465,7 @@ def test_missing_legacy_build_status_uses_verified_import_and_export(deployment)
 
 def test_verified_deployment_saves_skill_restriction(deployment):
     import private_access
-    manager, amazon = deployment
+    manager, _amazon = deployment
     deploy(manager)
     path = private_access.access_path(manager.path)
     assert json.loads(path.read_text()) == {"skill_id": SKILL}

@@ -802,6 +802,7 @@ class ResponseLogger(AbstractResponseInterceptor):
 # ############# REGISTER HANDLERS #####################
 # Request Handlers
 from .voice_music import VoiceMusicHandler
+
 sb.add_request_handler(VoiceMusicHandler())
 sb.add_request_handler(CheckAudioInterfaceHandler())
 sb.add_request_handler(SkillEventHandler())
