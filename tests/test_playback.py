@@ -373,12 +373,11 @@ def test_ma_command_echo_expires(monkeypatch):
 
 
 @pytest.mark.parametrize("header", ["X-Simulator-Bypass", "X-Simulator-Signature"])
-def test_simulator_bypass_requires_api_auth(client, header):
+def test_private_deployment_disables_simulator_bypass_even_with_api_auth(client, header):
     push(client)
     assert client.post("/", json=event(), headers={header: "true"}).status_code == 403
     response = client.post("/", json=event(), headers={**AUTH, header: "true"})
-    assert response.status_code == 200
-    assert response.json["response"]["directives"][0]["type"] == "AudioPlayer.Play"
+    assert response.status_code == 403
 
 
 def test_apl_preserves_provider_artwork_on_render_and_refresh(client, monkeypatch):

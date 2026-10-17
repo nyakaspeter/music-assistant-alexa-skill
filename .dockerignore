@@ -1,0 +1,9 @@
+.git
+.github
+secrets
+data
+deployment_data
+ask_data
+.env
+**/__pycache__
+**/*.pyc

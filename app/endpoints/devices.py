@@ -86,13 +86,28 @@ def devices_page():
             </td>
         </tr>""")
 
-    rows_html = '\n'.join(rows) or '<tr><td colspan="4" class="muted">No devices seen yet. Trigger an intent from each Echo, then reload this page.</td></tr>'
+    rows_html = '\n'.join(rows) or '<tr><td colspan="4" class="muted">No devices seen yet. Say “Alexa, open Music Assistant” on an Echo, then refresh this page.</td></tr>'
 
     body = f"""
-    <p class="muted">Alexa does not expose a friendly device name to Custom Skills, only an opaque per-device id.
-    Trigger any voice command (e.g. "next") from each Echo you want to control MA from, reload this page,
-    then pair each device id with its Music Assistant player_id (the name shown in MA, e.g. "Studio").
-    Next/Previous/StartOver and Pause/Stop/Resume are routed to mapped MA players.</p>
+    <h2>Add an Echo</h2>
+    <ol>
+        <li>On the Echo you want to add, say <strong>“Alexa, open Music Assistant.”</strong></li>
+        <li><a href="/devices">Refresh this page</a>. Its device ID should appear at the top with a recent time.</li>
+        <li>Enter its Music Assistant player ID (for example <strong>Echo Dot</strong>) and click Save.</li>
+    </ol>
+    <p class="muted">Add one Echo at a time so the most recent request identifies the device.
+    Alexa provides an opaque device ID, so the bridge cannot automatically match it to a player name.
+    A plain “next” command may not invoke this skill. Newly detected devices are shown for this bridge session;
+    saved mappings survive restarts. Clearing a player field and saving removes that mapping.</p>
+    <details>
+        <summary>Add manually using a known device ID</summary>
+        <p class="muted">Use the full Alexa device ID, not its name or the last 12 characters shown below.</p>
+        <form method="POST" action="/devices" class="mapping-form">
+            <label>Full Alexa device ID <input type="text" name="device_id" required></label>
+            <label>Music Assistant player ID <input type="text" name="player_id" required placeholder="Echo Dot"></label>
+            <button type="submit">Add mapping</button>
+        </form>
+    </details>
     <table>
         <thead><tr><th>Device id (last 12 chars)</th><th>Last seen</th><th>Last request</th><th>MA player_id</th></tr></thead>
         <tbody>

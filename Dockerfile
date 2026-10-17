@@ -1,19 +1,6 @@
-FROM ubuntu:22.04
-
+FROM python:3.12-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python and system dependencies
-# Python 3.12 via deadsnakes: Ubuntu 22.04 only ships 3.10 by default, but
-# music-assistant-client (used for MA voice-control commands) requires >=3.11.
-RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && \
-    apt-get install -y python3.12 python3.12-venv python3-pip libssl-dev curl gnupg ca-certificates && \
-    # Install Node.js 18 from NodeSource (ASK CLI requires a modern Node version)
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev ca-certificates curl nodejs npm && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -138,7 +125,7 @@ else:
     print('No patch needed for registry.py (needle not found)')
 PY
 # Install ASK CLI (v2) globally so container can run `ask configure`
-RUN npm install -g ask-cli || true
+RUN npm install -g ask-cli
 
 # Now copy the rest of your source code (commented out for dynamic development)
 COPY app /app/src
@@ -174,3 +161,16 @@ EXPOSE ${PORT}
 
 # If DEBUG_PORT is empty or set to 0, run without debugpy. Otherwise start debugpy.
 CMD ["/bin/sh", "-lc", "if [ -n \"${DEBUG_PORT}\" ] && [ \"${DEBUG_PORT}\" != \"0\" ]; then exec /app/venv/bin/python -m debugpy --listen 0.0.0.0:${DEBUG_PORT} src/app.py; else exec /app/venv/bin/python src/app.py; fi"]
+# oscrypto 1.3.0's version regex rejects OpenSSL patch numbers >= 10.
+RUN /app/venv/bin/python - <<'PY'
+from pathlib import Path
+base = Path('/app/venv/lib/python3.12/site-packages/oscrypto/_openssl')
+for name in ('_libcrypto_cffi.py', '_libcrypto_ctypes.py'):
+    path = base / name
+    source = path.read_text()
+    old = r'\\d\\.\\d\\.\\d[a-z]*'
+    new = r'\\d+\\.\\d+\\.\\d+[a-z]*'
+    if old not in source:
+        raise RuntimeError(f'Expected version pattern missing in {name}')
+    path.write_text(source.replace(old, new))
+PY

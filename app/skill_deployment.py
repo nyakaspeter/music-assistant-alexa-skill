@@ -220,6 +220,7 @@ def package_fingerprint(files):
     # ZIP metadata varies between exports; compare canonical member content.
     normalized = {}
     for key, content in files.items():
+        key = key.removeprefix("skill-package/")
         if key.endswith(".json"):
             content = canonical_json(content)
         normalized[key] = hashlib.sha256(content).hexdigest()
@@ -1137,6 +1138,11 @@ class DeploymentManager:
         enabled = self.api("GET", path + "/stages/development/enablement")
         if enabled.status_code != 204:
             raise DeploymentError("Amazon did not confirm development enablement.")
+        from private_access import save_allowed_skill_id
+        try:
+            save_allowed_skill_id(skill, self.path)
+        except OSError as exc:
+            raise DeploymentError("Could not save the skill restriction. Check data-directory permissions and resume deployment.") from exc
         self.update(
             phase="complete",
             message="Amazon confirmed the import, approved package, endpoint and development enablement. Test playback on your Echo.",

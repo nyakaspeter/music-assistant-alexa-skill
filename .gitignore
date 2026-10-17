@@ -89,3 +89,10 @@ addons/music-assistant-skill/scripts
 ask_data/
 .pytest_cache/
 .ruff_cache/
+
+# Private deployment state
+secrets/
+data/
+deployment_data/
+.env
+*.pem

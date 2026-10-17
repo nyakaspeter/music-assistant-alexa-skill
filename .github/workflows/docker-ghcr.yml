@@ -1,128 +1,132 @@
-name: Build and Push Docker image to GHCR
+name: Build, test and publish container
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
-      - 'Dockerfile'
-      - '.github/workflows/docker-ghcr.yml'
-      - 'app/**'
-    tags:
-      - 'v*'
-  # Releases are cut by publishing a GitHub release; building from the
-  # release event guarantees the image carries the release tag (v1.3.5 …)
-  # even when the tag was created by the release itself.
-  release:
-    types: [ published ]
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker-ghcr.yml
+      - app/**
+      - assets/**
+      - scripts/**
+      - tests/**
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths:
-      - 'Dockerfile'
-      - '.github/workflows/docker-ghcr.yml'
-      - 'app/**'
-  # Backfill a release tag onto an already-built image, e.g. after enabling
-  # this workflow: gh workflow run docker-ghcr.yml -f image_tag=v1.3.5
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker-ghcr.yml
+      - app/**
+      - assets/**
+      - scripts/**
+      - tests/**
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Extra raw image tag to apply (release tag to backfill)'
+        description: Optional additional image tag
         required: false
-        default: ''
+        default: ""
 
 permissions:
   contents: read
-  packages: write
-  # Keyless (Fulcio) cosign signing of pushed images, so the add-on can
-  # verify the base image signature before building from it.
-  id-token: write
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/music-assistant-skill
+  IMAGE: ghcr.io/${{ github.repository_owner }}/music-assistant-skill
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    name: Build and test ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
-          fetch-depth: 0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Login only when we push (not on PR)
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Test image
+        env:
+          TEST_IMAGE: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+        run: >-
+          docker run --rm -v "$PWD:/project:ro"
+          --entrypoint /bin/sh "$TEST_IMAGE" -c
+          '/app/venv/bin/pip -q install pytest && SKILL_APP_PATH=/app/src /app/venv/bin/python -m pytest /project/tests -q -p no:cacheprovider'
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Release tags (v1.3.5 / 1.3.5) come from the pushed tag or the
-          # published release; latest is added by the action for stable
-          # releases only. Branch pushes get edge + sha-… instead, so they
-          # never overwrite a release tag.
-          tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{version}}
-            type=sha
-            type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref_type == 'branch' }}
-            type=raw,value=${{ inputs.image_tag }},enable=${{ inputs.image_tag != '' }}
-
-      - name: Build (PR) - no push
-        if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & Push (push/release/workflow_dispatch)
+      - name: Push tested image
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          TEST_IMAGE: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+        run: docker push "$TEST_IMAGE"
 
-      # Sign the pushed multi-arch manifest (and its per-arch children)
-      # keyless via Fulcio. Consumers — the music-assistant-alexa-api
-      # add-on build — verify with:
-      #   cosign-issuer:   https://token.actions.githubusercontent.com
-      #   cosign-identity: https://github.com/timlaing/music-assistant-alexa-skill/.*
+  publish:
+    name: Publish multi-architecture tags
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish manifest
+        env:
+          REVISION: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EXTRA_TAG: ${{ inputs.image_tag }}
+        run: |
+          tags=(--tag "$IMAGE:latest" --tag "$IMAGE:sha-$REVISION")
+          if [ -n "$RELEASE_TAG" ]; then
+            tags+=(--tag "$IMAGE:$RELEASE_TAG" --tag "$IMAGE:${RELEASE_TAG#v}")
+          fi
+          if [ -n "$EXTRA_TAG" ]; then tags+=(--tag "$IMAGE:$EXTRA_TAG"); fi
+          docker buildx imagetools create "${tags[@]}" \
+            "$IMAGE:sha-$REVISION-amd64" \
+            "$IMAGE:sha-$REVISION-arm64"
       - name: Install Cosign
-        if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.6
-      - name: Sign pushed images
-        if: github.event_name != 'pull_request'
+      - name: Sign published images
+        env:
+          REVISION: ${{ github.sha }}
         run: |
-          set -euo pipefail
-          # All generated tags point at the same manifest; sign it once by digest.
-          ref="$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -n 1)"
-          digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
-          echo "Signing $ref@$digest"
-          cosign sign --yes --recursive "$ref@$digest"
+          digest="$(docker buildx imagetools inspect "$IMAGE:sha-$REVISION" --format '{{.Manifest.Digest}}')"
+          cosign sign --yes --recursive "$IMAGE@$digest"

@@ -1,70 +1,201 @@
 {
-    "interactionModel": {
-        "languageModel": {
-            "invocationName": "my radio",
-            "intents": [
-                {
-                    "name": "PlayAudio",
-                    "slots": [],
-                    "samples": [
-                        "play",
-                        "start",
-                        "play my radio",
-                        "play my radio please",
-                        "start my radio",
-                        "start my radio please",
-                        "start the radio",
-                        "start the radio please",
-                        "start the audio",
-                        "start the audio please",
-                        "play the audio",
-                        "play the audio please",
-                        "start the music",
-                        "start the music please",
-                        "play the music",
-                        "play the music please"
-                    ]
-                },
-                {
-                    "name": "AMAZON.PauseIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.ResumeIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.HelpIntent",
-                    "samples": [
-                        "help me please",
-                        "help please",
-                        "what should i do",
-                        "what's next",
-                        "how can I listen to my radio",
-                        "tell me how to play",
-                        "tell me how to stop",
-                        "tell me how to resume",
-                        "how to stop"
-                    ]
-                },
-                {
-                    "name": "AMAZON.StopIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.CancelIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.StartOverIntent",
-                    "samples": []
-                },
-                {
-                    "name": "AMAZON.FallbackIntent",
-                    "samples": []
-                }
-            ],
-            "types": []
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "music assistant",
+      "intents": [
+        {
+          "name": "PlayAudio",
+          "slots": [],
+          "samples": [
+            "play",
+            "start",
+            "play my radio",
+            "play my radio please",
+            "start my radio",
+            "start my radio please",
+            "start the radio",
+            "start the radio please",
+            "start the audio",
+            "start the audio please",
+            "play the audio",
+            "play the audio please",
+            "start the music",
+            "start the music please",
+            "play the music",
+            "play the music please",
+            "play audio"
+          ]
+        },
+        {
+          "name": "AMAZON.PauseIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.ResumeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": [
+            "help me please",
+            "help please",
+            "what should i do",
+            "how can I listen to my radio",
+            "tell me how to play",
+            "tell me how to stop",
+            "tell me how to resume",
+            "how to stop"
+          ]
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StartOverIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "PlaySongIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "play {query}",
+            "play the song {query}"
+          ]
+        },
+        {
+          "name": "PlayPlaylistIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "play my playlist {query}",
+            "play playlist {query}",
+            "play my {query} playlist"
+          ]
+        },
+        {
+          "name": "PlayArtistIntent",
+          "samples": [
+            "play music by {query}",
+            "play songs by {query}",
+            "play the artist {query}"
+          ],
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ]
+        },
+        {
+          "name": "PlayAlbumIntent",
+          "samples": [
+            "play the album {query}",
+            "play album {query}"
+          ],
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ]
+        },
+        {
+          "name": "AMAZON.NextIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.PreviousIntent",
+          "samples": []
+        },
+        {
+          "name": "PlaySimilarIntent",
+          "slots": [],
+          "samples": [
+            "play similar songs",
+            "switch to similar songs",
+            "play songs like this",
+            "start a mix from this song"
+          ]
+        },
+        {
+          "name": "PlayRecommendedIntent",
+          "slots": [],
+          "samples": [
+            "play music",
+            "play some music",
+            "play recommended music",
+            "play something",
+            "play my recommendations"
+          ]
+        },
+        {
+          "name": "WhatsPlayingIntent",
+          "slots": [],
+          "samples": [
+            "what's playing",
+            "what is playing",
+            "what song is this",
+            "what is this song"
+          ]
+        },
+        {
+          "name": "WhatsNextIntent",
+          "slots": [],
+          "samples": [
+            "what's next",
+            "what is next",
+            "what song is next",
+            "what plays next"
+          ]
+        },
+        {
+          "name": "WhatsPreviousIntent",
+          "slots": [],
+          "samples": [
+            "what played before this",
+            "what was the previous song",
+            "what was playing before",
+            "what song played last"
+          ]
+        },
+        {
+          "name": "ShuffleAlbumIntent",
+          "slots": [],
+          "samples": [
+            "shuffle this album",
+            "shuffle the rest of this album",
+            "shuffle the remaining album tracks"
+          ]
+        },
+        {
+          "name": "ShufflePlaylistIntent",
+          "slots": [],
+          "samples": [
+            "shuffle this playlist",
+            "shuffle the rest of this playlist",
+            "shuffle the remaining playlist tracks"
+          ]
         }
+      ],
+      "types": []
     }
+  }
 }

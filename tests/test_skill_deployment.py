@@ -1458,3 +1458,11 @@ def test_missing_legacy_build_status_uses_verified_import_and_export(deployment)
     deploy(manager)
     assert manager.state["phase"] == "complete"
     assert any("/exports" in url for _, url, _ in amazon.calls)
+
+
+def test_verified_deployment_saves_skill_restriction(deployment):
+    import private_access
+    manager, amazon = deployment
+    deploy(manager)
+    path = private_access.access_path(manager.path)
+    assert json.loads(path.read_text()) == {"skill_id": SKILL}

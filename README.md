@@ -1,193 +1,128 @@
 # Music Assistant Alexa Skill
-This project provides the Alexa skill service for Music Assistant, with a Flask API and a personal-skill deployment wizard.
 
-For Home Assistant Supervisor, use the maintained [Music Assistant Alexa API add-on](https://github.com/timlaing/music-assistant-alexa-api). This skill repository contains the application; the companion repository packages and configures it for Home Assistant.
+A self-hosted Alexa bridge for Music Assistant, with spoken song, artist, album and playlist selection. Run it in Docker on a Linux server or NAS. AWS Lambda is not required.
 
-## How to Run
+Fork of [timlaing/music-assistant-alexa-skill](https://github.com/timlaing/music-assistant-alexa-skill). This fork adds voice selection, recommendation commands and skill restrictions. Music Assistant and its music providers supply the music and recommendations.
 
-#### Prerequisites
+## How it works
 
-- An Amazon developer account: https://developer.amazon.com/en-US/docs/alexa/ask-overviews/create-developer-account.html
-- Skill Access Management enabled for your developer account: [https://developer.amazon.com/alexa/console/ask/settings/access-management](https://developer.amazon.com/alexa/console/ask/settings/access-management)
-    ![Skill Access Management](assets/screenshots/skill-access-management.png)
-- Home Assistant Supervisor for add-on deployment, or Docker and Docker Compose for standalone deployment
-- Public HTTPS endpoints for the skill and audio streams; Nginx Proxy Manager can provide both
+Alexa sends signed skill requests to the bridge over HTTPS. The bridge searches and controls Music Assistant through its API. Music Assistant's Alexa player provider connects back to the bridge to start audio playback on an Echo. The Echo retrieves audio through Music Assistant's stream endpoint.
 
-### 1. Using Docker Compose (standalone)
+The application runs on your server; Amazon still processes voice commands and operates the Alexa service. A development skill can be enabled for its owner without publishing it to the Alexa Skills Store.
 
-For a standalone host, run the project with Docker Compose. This will build and start the Alexa skill container with required environment variables, secrets, and a persistent private deployment volume.
+## Voice commands
 
-#### Steps:
+The extended voice model is available in English (US), with invocation name **music assistant**:
 
-1. Ensure `docker-compose.yml` is present and edit environment variables as needed (e.g., `SKILL_HOSTNAME`, `MA_HOSTNAME`, `PORT`). See the [Environment Variables](#environment-variables) section below for details on each variable.
-2. Create `./secrets/app_username.txt` and `./secrets/app_password.txt` to provide `APP_USERNAME` and `APP_PASSWORD` for basic authentication of the web UI and API. Also create `./secrets/lwa_client_secret.txt`: put your Login with Amazon client secret in it, or create an empty file if you will enter the secret later through Setup. Compose requires all three declared secret files to exist, even when you do not use the deployment wizard.
-3. Persist `./deployment_data:/data` for private deployment credentials/progress. Register Login with Amazon and configure the client ID and secret, then register the generated callback as described in the [Skill Setup](#skill-setup).
-4. Start the service:
+| Command | Behavior |
+| --- | --- |
+| Alexa, ask Music Assistant to play Teardrop | Find a song and start a similar-song mix |
+| Alexa, ask Music Assistant to play One by Metallica | Match the song title and artist |
+| Alexa, ask Music Assistant to play songs by Linkin Park | Queue the artist's tracks |
+| Alexa, ask Music Assistant to play the album Hybrid Theory | Queue an album in normal order |
+| Alexa, ask Music Assistant to play the album One More Light by Linkin Park | Match the album title and artist |
+| Alexa, ask Music Assistant to shuffle this album | Randomize the remaining unbuffered album tracks once |
+| Alexa, ask Music Assistant to shuffle this playlist | Randomize the remaining unbuffered playlist tracks once |
+| Alexa, ask Music Assistant what is playing | Announce the current song and artist |
+| Alexa, ask Music Assistant what is next | Announce the next queued song and artist |
+| Alexa, ask Music Assistant what played before this | Announce the preceding queue entry |
+| Alexa, ask Music Assistant to play my playlist Favorites | Play an imported library playlist |
+| Alexa, ask Music Assistant to play similar songs | Replace upcoming selections with a mix based on the current song |
+| Alexa, ask Music Assistant to play music | Pick a random Music Assistant recommendation, with a library fallback |
 
-    ```sh
-    docker compose up -d
-    ```
+Pause, resume, stop, next and previous use the bridge's playback controls. Similar-song requests preserve the current and already buffered audio, so a prepared next track may still play before the new mix.
 
-5. The service will be available at `http://localhost:5000` (or the IP/port you configured).
-6. For standalone Docker, open `/setup` and authenticate with app credentials; for the maintained add-on use Home Assistant ingress with no second login. Connect Amazon, explicitly select your existing personal skill (or request creation), review the configuration and deploy. Amazon returns through `/ma-alexa-skill/setup/oauth/callback`, and the original wizard completes the connection automatically. See the [Skill Setup](#skill-setup).
+Artist is optional for both songs and albums. A final “by artist” qualifier is parsed from the free-form request, and candidates must match that artist and title; a different artist is not silently substituted. Unqualified searches prefer exact titles, otherwise the first available result. Playlist requests prefer an exact library name and reject ambiguous matches.
 
-The wizard is available in stable **1.3.0**. The maintainer confirmed it was tested and working on 4 October 2026. Login with Amazon security-profile registration is a one-time manual prerequisite; the skill configuration pages are populated through the management API afterwards. The bundled Compose file builds this checkout so it includes this implementation rather than an upstream image.
+Generic “play music” shuffles Music Assistant recommendation rows and randomly chooses an available track from the first row containing tracks. There is no YouTube Music preference or dependency. If no recommendation row provides tracks, it uses randomly ordered favorites, then library tracks. Similar-track radio is attempted when an available provider advertises support; otherwise, or if generating the mix fails, playback uses a normal selection from the library. Recommendations that contain only albums, artists or playlists are skipped by the track selector.
 
-### 2. Home Assistant add-on
+Album and playlist requests explicitly disable inherited shuffle when starting. “Shuffle this album” and “shuffle this playlist” reorder only the upcoming unbuffered tracks of a single finite album or playlist queue, preserving played tracks, queue item identities and its album or playlist source. It never enables persistent shuffle. Already buffered audio cannot be moved; very short remaining queues and mismatched or dynamic queues are rejected. Queue announcements describe the current queue, not a separate listening-history database. The next selection can change as a dynamic mix refreshes. Read-only announcements and one-time shuffle use a short response timeout; if playback advances while rearranging tracks, the operation stops and asks you to try again.
 
-Use [timlaing/music-assistant-alexa-api](https://github.com/timlaing/music-assistant-alexa-api) as the custom add-on repository. Install **Music Assistant Alexa API add-on** on an **aarch64** or **amd64** Home Assistant Supervisor installation.
+Radio-station selection, queue insertion and repeat voice commands are not added by this fork. The selection, announcements and shuffle commands use provider-independent Music Assistant APIs, subject to the music provider's supported features.
 
-1. Add `https://github.com/timlaing/music-assistant-alexa-api` in **Settings > Add-ons > Add-on Store > Repositories**.
-2. Start the add-on and open **Web UI → Setup** through Home Assistant ingress. Edit application settings there; the old Supervisor options are retained only for one-time migration. The default locale is `en-US`, and an empty API password is generated and saved on startup.
-3. Configure the public HTTPS endpoints described below, then follow [Skill Setup](#skill-setup) to register LWA, connect Amazon and create or update your personal skill.
-4. In Music Assistant's Alexa provider, set **API URL** to the add-on LAN base URL, such as `http://<HA-LAN-IP>:5000`, without `/ma`. Use the add-on API username and password for Basic Auth.
+## Requirements
 
-The maintained add-on is a separate implementation from the development wrapper in [`addons/music-assistant-skill`](addons/music-assistant-skill/README.md). Use the companion repository's [setup guide](https://github.com/timlaing/music-assistant-alexa-api#configuration) and [option reference](https://github.com/timlaing/music-assistant-alexa-api/blob/main/music-assistant-alexa-api/DOCS.md) for Supervisor deployment.
+- Docker Compose on a Linux amd64 or arm64 host.
+- Music Assistant with a working music provider and an API token.
+- An Amazon developer account associated with the Echo devices.
+- HTTPS access to the bridge's skill endpoint and Music Assistant's audio stream server, with certificates accepted by Alexa.
+- An Alexa player provider configured in Music Assistant.
 
-#### Public HTTPS and Nginx Proxy Manager
+Use the **music assistant** invocation to match the standard Music Assistant Alexa provider; no Music Assistant server modifications are required. Updating an existing skill preserves its invocation name. If it differs, change and build its model in Amazon's developer console.
 
-| Address | Proxy upstream | Add-on option |
-| --- | --- | --- |
-| `https://alexa.example.com` | `http://<HA-LAN-IP>:5000` | `skill_hostname` |
-| `https://streams.example.com` | `http://<MA-LAN-IP>:8097` | `ma_hostname` |
+## Docker installation
 
-Expose NPM's HTTPS port **443** to the internet; keep add-on **5000** and Music Assistant stream **8097** internal. Alexa needs public HTTPS access to both the skill and the audio, including on APL devices. Direct internet forwarding of the application ports is unnecessary. Use publicly trusted TLS certificates, and allow signed Alexa POST requests through the public skill proxy without an additional NPM login or access list.
+Image:
 
-For a shared public hostname, configure these NPM custom locations. Stream routes preserve their full paths; the skill route strips its prefix.
-
-| NPM location | Forward to | Path handling | When needed |
-| --- | --- | --- | --- |
-| `/ma-alexa-skill/` | `http://<HA-LAN-IP>:5000` | Strip `/ma-alexa-skill/`; forward to the add-on root. | Skill requests and Amazon setup callback. |
-| `/flow/` | `http://<MA-LAN-IP>:8097` | Preserve the full path. | Music Assistant queue streams. |
-| `/pluginsource/` | `http://<MA-LAN-IP>:8097` | Preserve the full path. | Plugin audio streams using this route. |
-| `/source/` | `http://<MA-LAN-IP>:8097` | Preserve the full path. | Live sources, including iPhone audio via AirPlay Receiver. |
-| `/announcement/` | `http://<MA-LAN-IP>:8097` | Preserve the full path. | Announcement audio using this route. |
-| `/imageproxy/` | `http://<MA-LAN-IP>:8097` | Preserve the full path. | Music Assistant artwork. |
-| `/alexa/` | `http://<HA-LAN-IP>:5000` | Preserve the full path, including `/alexa/intents`. | Only if Music Assistant's Alexa provider API URL uses this public hostname. |
-| `/ma/` | `http://<HA-LAN-IP>:5000` | Preserve the full path, including `/ma/push-url`. | Only if Music Assistant's Alexa provider API URL uses this public hostname. |
-
-A dedicated stream hostname forwarding all paths to **8097** already covers the stream locations and needs no extra custom locations. A dedicated add-on hostname forwarding all paths to **5000** already covers `/alexa/` and `/ma/`; keep the core `/ma-alexa-skill/` route for the Amazon setup callback. `/status` and `/setup` are provided through Home Assistant ingress and need no public NPM locations.
-
-If Music Assistant connects directly to the add-on LAN API URL, `/alexa/` and `/ma/` proxy locations are unnecessary. If it connects through the public proxy instead, set its Alexa provider **API URL** to the hostname's base URL (for example, `https://music.example.com`, without `/ma` or `/ma-alexa-skill`). Use the add-on API credentials in its Basic Auth fields and avoid an additional NPM authentication layer on these API locations. The optional Music Assistant control API on **8095** is separate from these routes.
-
-The add-on supports a public audio URL path prefix without duplicating it when rewriting stream URLs. Changing the Supervisor host port mapping does not change internal port **5000**; adjust NPM's forwarding port and the LAN API URL to match the host mapping.
-
-If a live stream returns 404, compare the same path through the public HTTPS hostname and directly against the internal Music Assistant stream server while the iPhone is actively streaming. Internal success with a public 404 points to proxy routing; a 404 from both requires investigation of the Music Assistant stream URL. The maintainer confirmed successful iPhone-to-Alexa playback on 6 October 2026 after adding `/source/` and correcting the NPM configuration. This confirms the tested installation, rather than every live-source configuration.
-
-#### 1.2.0 features and validation
-
-Stable **1.2.0** includes merged [add-on PR #28](https://github.com/timlaing/music-assistant-alexa-api/pull/28), application fixes in [skill PR #1](https://github.com/timlaing/music-assistant-alexa-skill/pull/1) and the [publication repair](https://github.com/timlaing/music-assistant-alexa-api/pull/29):
-
-- Optional `ma_api_url` (normally `http://<MA-LAN-IP>:8095`) and `ma_api_token` for mapped voice controls. These control API credentials are separate from the public stream URL and are unnecessary for basic playback.
-- `/devices` maps each opaque Alexa device ID to the actual MA `player_id`, rather than its display name. Next, previous and start-over route to MA; pause, stop and resume also synchronize mapped players, with one-shot suppression of commands echoed back by MA.
-- Device mappings persist at `/data/device_players.json`, deployment credentials/progress at `/data/skill-deployment.json`, and legacy ASK credentials at `/data/.ask`.
-- `enable_apl` defaults to `false`; enable it for Echo Show artwork and controls. `skip_url_validation` defaults to `false`; skipping the local check does not remove Alexa's need for a reachable HTTPS stream.
-- Internal service port **5000** remains fixed when changing the host port mapping. `/health` provides unauthenticated process liveness; status pages and APIs use the configured credentials.
-
-Version 1.2.0 passed 46 combined application/add-on tests and HTTP, concurrency and shutdown checks in ARM64 and AMD64 add-on containers, plus CI lint, CodeQL and image builds. On 3 October 2026 the maintainer confirmed playback on a real Alexa device with NPM. This covers the tested installation, not every device or optional feature; the standalone Docker image and bundled development wrapper were not validated by those checks.
-
-### 3. Using `docker run`
-
-Build this checkout to include the setup wizard. This standalone Dockerfile has not been validated by the maintained add-on container checks. Set the Login with Amazon options and persist `/data` as described in the [Skill Setup](#skill-setup).
-
-```sh
-docker build -t music-assistant-skill:local .
-docker run --rm \
-    -p 5000:5000 \
-    -e SKILL_HOSTNAME=https://alexa.example.com/ \
-    -e MA_HOSTNAME=ma.example.com \
-    -e APP_USERNAME=/run/secrets/APP_USERNAME \
-    -e APP_PASSWORD=/run/secrets/APP_PASSWORD \
-    -e LWA_CLIENT_ID=YOUR_CLIENT_ID \
-    -e LWA_CLIENT_SECRET=/run/secrets/LWA_CLIENT_SECRET \
-    -e SKILL_DEPLOYMENT_PATH=/data/skill-deployment.json \
-    -e PORT=5000 \
-    -e LOCALE=en-US \
-    -v "$(pwd)/ask_data:/root/.ask" \
-    -v "$(pwd)/deployment_data:/data" \
-    -v "$(pwd)/secrets/lwa_client_secret.txt:/run/secrets/LWA_CLIENT_SECRET:ro" \
-    -v "$(pwd)/secrets/app_username.txt:/run/secrets/APP_USERNAME:ro" \
-    -v "$(pwd)/secrets/app_password.txt:/run/secrets/APP_PASSWORD:ro" \
-    music-assistant-skill:local
+```text
+ghcr.io/nyakaspeter/music-assistant-skill:latest
 ```
 
-Notes:
-- Adjust `SKILL_HOSTNAME` to the public HTTPS host you'll use in the skill manifest.
-- The `ask_data` volume preserves legacy CLI credentials. The new wizard uses its own OAuth client and requires a persistent `/data` volume.
-- Mounting files into `/run/secrets` is a simple way to provide secrets for local testing; for production use Docker secrets or your platform's secret manager.
+Use [compose.nas.yaml](compose.nas.yaml) as a starting point. The image supports Linux amd64 and arm64. `latest` follows main; `sha-<full-commit-SHA>` identifies a specific build.
 
-## Skill Setup
+Set `APP_USERNAME` and `APP_PASSWORD` directly in Compose before starting. Choose a strong password instead of the example placeholder. The username defaults to `admin` in the sample.
 
-Create or update your personal Alexa development skill through the **Setup** page. You do not need to manually create the skill, import interaction-model JSON, configure interfaces or build it in the Alexa Developer Console. One-time **Login with Amazon (LWA) security-profile registration** is still required.
+```sh
+mkdir -p data
+docker compose -f compose.nas.yaml up -d
+```
 
-1. Configure the public HTTPS skill and audio routes in the NPM table above, then start the add-on. Open **Web UI** in Home Assistant and select **Set up personal Alexa skill →** on the status page. Setup uses Home Assistant ingress with no separate app login. For standalone Docker, open `/setup` and sign in with the app credentials.
-2. In **Application settings**, enter the public audio URL and save. In **Credentials**, set or reveal the API username/password that Music Assistant will use. The public skill endpoint defaults to the audio URL's origin plus `/ma-alexa-skill/`; use **Skill setup → Advanced skill settings** only if you need to override it.
-3. In **Connect to Amazon**, follow the registration instructions and open the linked [Login with Amazon console](https://developer.amazon.com/loginwithamazon/console/site/lwa/overview.html). Create a security profile with the Amazon developer account associated with your Echo devices. Copy the page's generated **Amazon callback URL** into the profile's **Web Settings → Allowed Return URLs**. It uses `https://<public-host>/ma-alexa-skill/setup/oauth/callback` and the existing skill proxy route.
-4. Copy the profile's **Client ID** and **Client Secret** into **Connect to Amazon**, select **Save Amazon settings**, then **Connect**. Approve Amazon access and return to Setup; the connection finishes automatically. Allow pop-ups, or use **Continue to Amazon sign-in** if the window does not open. A green tick confirms connection.
-5. In **Skill setup**, select the developer account and your existing personal skill, or explicitly choose **Create a new personal skill**. Set the Echo's locale and optional Echo Show display. Under **Advanced skill settings**, choose **Trusted** for a normal CA-issued certificate such as NPM Let's Encrypt, **Trusted sub-domain** for a wildcard certificate, or **File** for a self-signed development certificate with a public PEM upload. Select **Save skill settings**.
-6. Select **Review settings**, check the skill ID/name, endpoint, locale, certificate and display preference, then select **Deploy approved settings**. The app configures the skill, imports/builds the voice model, applies the add-on icon and enables development testing. Saving settings alone does not deploy them. This creates a personal development skill; it does not publish it to the Alexa Skills Store.
-7. In Music Assistant's Alexa provider, set **API URL** to `http://<HA-LAN-IP>:5000` (without `/ma`) and copy the API credentials from Setup. Return to **Status** to check URL reachability, then start playback in Music Assistant and test your Echo using the skill's displayed invocation name.
+Open the setup wizard to configure the Music Assistant API token, public hostnames and Login with Amazon credentials. These are saved through the GUI, so they do not need environment variables.
 
-The callback and audio must be publicly reachable; Home Assistant's Setup and Status pages remain private through ingress. For standalone deployment, use your container's API address instead of the add-on LAN address.
+The wizard automatically saves the allowed skill ID after verifying the deployment with Amazon. No skill ID or owner ID needs to be entered in Compose, and no credential `.txt` files or secrets mount are required.
 
-### Environment Variables
+Keep credentials and runtime data out of source control. `data/` stores settings, Amazon authorization state and device mappings. The GUI setup does not require a persistent ASK CLI directory. The application defaults to `/data` for settings, deployment state and device mappings, so no storage-path environment variables are needed. Back up this directory securely. Saved web settings override environment defaults.
 
-For stable **1.3.0**, edit application settings on `/setup`; standalone environment variables are bootstrap defaults until the first web save. Persist `/data/app-settings.json` (or set `APP_SETTINGS_PATH`). Home Assistant add-on users use ingress Setup instead of the add-on Configuration tab. Existing available legacy values migrate once; saved web settings take precedence after restarts. Secrets stay masked, blank inputs retain them, and Credentials provides an explicit API-password reveal for connecting Music Assistant. The callback is derived from the skill endpoint origin; saving does not deploy to Amazon. The unused AWS region setting has been removed.
+The example publishes port **5050** on the host. Enter a Music Assistant control URL reachable from the bridge container in the setup wizard, such as `http://192.168.1.100:8095` or a reachable Docker service hostname. The Compose file does not assume that Music Assistant runs on the same host.
 
-| Variable | Required | Default | Description |
-|---|:---:|:---:|---|
-| `SKILL_HOSTNAME` | No | `MA_HOSTNAME` + `/ma-alexa-skill/` | Must be a full publicly reachable HTTPS URL (example: `https://alexa.example.com/`). Should proxy to your open port on this container (port **5000** by default).  Public hostname used in the Alexa skill manifest and to validate the skill endpoint. |
-| `MA_HOSTNAME` | Yes for LAN stream URLs | — | Public HTTPS hostname for streams (example: `streams.example.com`, without a scheme), proxied to Music Assistant stream port **8097**. Alexa needs public streams on both screenless and APL devices. The maintained add-on also accepts a full HTTPS base URL in its setup-page `ma_hostname` setting. |
-| `APP_USERNAME` | Yes for setup | — | Username for the web UI and API basic authentication. In Docker Compose this is provided via a Docker secret (`/run/secrets/APP_USERNAME`) pointing to `./secrets/app_username.txt`, or as a plain env var when not using secrets. |
-| `APP_PASSWORD` | Yes for setup | — | Password for the web UI and API basic authentication. Can be supplied as a Docker secret file or plain env var. |
-| `PORT` | No | `5000` | Port the app lives at. Ensure the `ports` mapping in [docker-compose.yml](docker-compose.yml) matches this value. |
-| `DEBUG_PORT` | No | `5678` | Remote debug port (if you enable remote debugging). |
-| `LOCALE` | *No | `en-US` | ***REQUIRED** if your device is not configured for en-US. Skill locale used by the setup and interaction model operations (examples: `en-US`, `en-GB`, `de-DE`). |
-| `TZ` | No | `UTC` | Container timezone (example: `America/Chicago`) to make logs/timestamps match your locale. |
-| `SKIP_URL_VALIDATION` | No | `false` | Skip server-side HEAD/GET validation of the rewritten stream URL before sending it to the Echo. Useful when the skill container cannot reach the external stream URL due to Docker network routing (e.g., macvlan isolation, custom outbound firewall rules). |
-| `ENABLE_APL` | No | `false` | Enable rich APL rendering (cover art, title, on-screen playback controls) on Echo Show and other APL-capable devices, instead of the plain AudioPlayer-only flow. Disabled by default for playback stability; set to `true` to opt back into screen rendering and live metadata refresh on supported devices. |
-| `MA_API_URL` | *No | — | Needed for mapped MA voice controls. Base URL of the Music Assistant control API (normally `http://<MA-LAN-IP>:8095`), used to send commands to the MA player paired with the requesting Echo (see [Device Mapping](#device-mapping) below). |
-| `MA_API_TOKEN` | *No | — | ***REQUIRED** alongside `MA_API_URL` if your MA server enforces authentication. A long-lived token created via MA's own auth flow (`auth/token/create`). Can be provided as a Docker secret the same way as `APP_PASSWORD`. |
+### Setup
 
-**Secrets and persistence**
+1. Open `http://SERVER-IP:5050/setup` and sign in with `APP_USERNAME` and `APP_PASSWORD`.
+2. Set the Music Assistant control URL and enter its API token.
+3. Configure public skill and audio hostnames. For example, reverse-proxy `alexa-api.example.com` to bridge port 5050 and `alexa-stream.example.com` to Music Assistant port 8097. Select the certificate type matching the public endpoint.
+4. Follow the wizard to register a Login with Amazon security profile, authorize developer access, and create or update a development skill. Keep invocation name `music assistant` and enable development testing.
+5. Complete deployment in the wizard. It verifies the skill and saves its ID automatically.
+6. In Music Assistant, add the Alexa player provider, supply the bridge API address and credentials, and complete its Amazon authentication.
+7. Say “Alexa, open Music Assistant” on an Echo. Open `/devices` on the bridge, refresh, and map that device to its Music Assistant player. Repeat one Echo at a time.
+8. Test a song request and check the bridge logs if playback does not start.
 
-- The example [docker-compose.yml](docker-compose.yml) demonstrates using Docker secrets for `APP_USERNAME` and `APP_PASSWORD` (files in `./secrets`). When using Docker secrets, the container environment will contain the path to the secret file (for example `/run/secrets/APP_PASSWORD`) and the service reads the file content.
-- Persist `/data` for the new setup wizard. Legacy ASK credentials in `/root/.ask` belong to another OAuth client and do not skip the new browser connection.
+The setup wizard displays the OAuth callback URL that must be registered with Amazon. Skill requests are blocked until a verified skill has been configured through the wizard. An accepted voice command may acknowledge before playback preparation finishes; background errors appear in the logs.
 
-**Notes on values**
+The public skill endpoint must allow Alexa requests without an interactive login or browser challenge. Administrator pages use the bridge's own password protection. Cloudflare proxying can be used provided it forwards Alexa's requests and audio without blocking or challenging them.
 
-- `SKILL_HOSTNAME` must refer to a public HTTPS endpoint reachable by Amazon; it is embedded in the skill manifest and used for endpoint validation.
-- If you override `PORT` or `DEBUG_PORT`, update the `ports` mapping in [docker-compose.yml](docker-compose.yml) accordingly (host:container).
+### Updating
 
-## Basic Troubleshooting
-### Status Page
-`/status`
+```sh
+docker compose -f compose.nas.yaml pull
+docker compose -f compose.nas.yaml up -d
+```
 
-Returns local API health and the saved personal-skill deployment result, including verification time and selected ID. With no direct API connection, a legacy ASK CLI check is still available. The saved result is not a live Amazon status check. Open `/setup` to review and deploy again.
+An image update alone does not update the voice model hosted by Amazon. Use the setup wizard to review and deploy model changes.
 
-### Device Mapping
-`/devices`
+## Access controls
 
-Alexa's Custom Skill API only exposes an opaque, per-skill device id in each request — there is no way to resolve it to a friendly device name or to a Music Assistant player. This page lets you pair each Echo's device id with the corresponding MA `player_id` so voice controls can be routed to the right player. To pair a new device: trigger any voice command from it (e.g. "next"), reload this page (it lists every device id seen in the current session), then enter the matching MA player_id.
+The Alexa SDK validates Amazon signatures and request timestamps. This fork additionally requires the skill ID to match the wizard's verified deployment and disables simulator signature bypasses. It does not impose a separate owner-user allowlist: access to the skill is managed through Amazon's development/testing or distribution settings. Device mappings route authorized skill requests to the correct Music Assistant player.
 
-Next, Previous and StartOver route to the mapped MA player. Pause, Stop and Resume retain Alexa-side playback control and also synchronize the mapped MA player when MA control credentials are configured. One-shot echo suppression prevents commands spoken back by the MA `alexa` player provider through `alexapy` from being sent to MA again. Basic playback does not require MA control credentials. Persist `DEVICE_MAPPING_PATH` for standalone deployments; the maintained add-on uses `/data/device_players.json`.
+The wizard persists the restriction in `/data/skill-access.json`. Updates recover the skill ID automatically from a previously completed wizard deployment when that file is absent. Before setup completes, skill requests fail closed while the management UI remains available. Credentials and deployment settings are supplied or saved at runtime, not included in the image. A public repository and image do not publish the Alexa skill.
 
-### TLS and proxy checks
+## Development and builds
 
-Use a publicly trusted HTTPS certificate for the skill and stream hosts. Check that Amazon and the Echo can reach these endpoints from outside your LAN. If a proxy's TLS settings prevent connection, allow TLS 1.2 while investigating; the automated add-on checks do not establish compatibility with every TLS/proxy configuration.
+```sh
+docker build -t music-assistant-skill:dev .
+docker run --rm -v "$PWD:/project:ro" \
+  --entrypoint /bin/sh music-assistant-skill:dev -c \
+  '/app/venv/bin/pip -q install pytest && SKILL_APP_PATH=/app/src /app/venv/bin/python -m pytest /project/tests -q -p no:cacheprovider'
+```
 
----
+CI builds once on each native architecture, runs tests against that image, then publishes the tested image. Once both architectures succeed, it publishes the combined `latest` and commit tags. Pull requests build and test without publishing.
 
-See [COMPATIBILITY.md](COMPATIBILITY.md) for known supported devices, languages, and regions.
+In addition to voice controls, this fork includes a Debian/Python 3.12 container, OpenSSL compatibility handling, device onboarding, skill restrictions, and normalization of Amazon package exports while retaining upstream deployment diagnostics. Dependency compatibility patches do not disable request verification.
 
-See [LIMITATIONS.md](LIMITATIONS.md) for known limitations.
+## Related projects
 
-See [DISCLAIMER.md](DISCLAIMER.md) for security concerns and development disclosures.
+- [Original bridge](https://github.com/timlaing/music-assistant-alexa-skill)
+- [Music Assistant server](https://github.com/music-assistant/server)
+- [Music Assistant Alexa provider documentation](https://www.music-assistant.io/player-support/alexa/)
+- [Upstream Home Assistant add-on](https://github.com/timlaing/music-assistant-alexa-api)
 
-Standalone deployments can bootstrap Amazon credentials with `LWA_CLIENT_ID` and `LWA_CLIENT_SECRET`, and certificate selection with `SKILL_CERTIFICATE_TYPE`. Settings persist at `/data/app-settings.json` (`APP_SETTINGS_PATH` override), and deployment credentials/progress at `/data/skill-deployment.json` (`SKILL_DEPLOYMENT_PATH` override). Persist and protect `/data`; Home Assistant users edit these settings in Setup.
-
-The maintained add-on exposes `/status` and `/setup` through Home Assistant ingress on private port 8099, with no app login. It blocks these pages on the external 5000 listener. Status also checks skill-health, stream-host and current-audio HTTPS reachability in the background; see the [Skill Setup](#skill-setup).
-
-### Migration release compatibility
-
-Stable 1.3.0 keeps the legacy Supervisor schema with migration-only labels to preserve existing configuration during upgrade. Settings are imported once into `/data/app-settings.json`; all subsequent edits belong in ingress Setup. Later edits to the legacy fields are ignored. The obsolete AWS region option remains removed. Remove this temporary compatibility schema only in a later release once migration is verified.
+The Home Assistant add-on is a separate packaging option and is not needed for this Docker deployment.

@@ -136,6 +136,23 @@ ma_app.wsgi_app = BasicAuthMiddleware(ma_app.wsgi_app)
 alexa_app.wsgi_app = BasicAuthMiddleware(alexa_app.wsgi_app)
 app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {'/ma': ma_app.wsgi_app, '/alexa': alexa_app.wsgi_app})
 app.wsgi_app = IngressMiddleware(app.wsgi_app)
+
+class SkillRequestTrace:
+    """Trace only skill ingress/status, never credentials, query strings or payloads."""
+    def __init__(self, application):
+        self.application = application
+    def __call__(self, environ, start_response):
+        if environ.get('PATH_INFO') != '/' or environ.get('REQUEST_METHOD') != 'POST':
+            return self.application(environ, start_response)
+        trace_id = environ.get('HTTP_CF_RAY', 'direct')
+        logging.warning('Skill ingress ray=%s signed=%s', trace_id, bool(environ.get('HTTP_SIGNATURE')))
+        def traced_start(status, headers, exc_info=None):
+            logging.warning('Skill response ray=%s status=%s', trace_id, status)
+            return start_response(status, headers, exc_info)
+        return self.application(environ, traced_start)
+
+app.wsgi_app = SkillRequestTrace(app.wsgi_app)
+
 # Log mount information only when running the module as the main program
 try:
     if __name__ == '__main__':
@@ -156,7 +173,7 @@ def _check_app_basic_auth():
     if ingress_enabled() and ui_path(request.path):
         return Response('Open this page through Home Assistant ingress', 403)
     # Allow the Alexa skill POST endpoint to be called without app-level auth
-    if request.path == '/health' or (request.path == '/' and request.method == 'POST'):
+    if request.path in ('/health', '/privacy') or (request.path == '/' and request.method == 'POST'):
         return None
     # Read credentials from secrets (APP_USERNAME/APP_PASSWORD)
     app_user = get_env_secret('APP_USERNAME')
@@ -192,6 +209,10 @@ def _ingress_response(response):
     response.headers['Cache-Control'] = 'no-store'
     return response
 
+
+# Reject other skills before capturing request payloads.
+from private_access import check_private_access
+app.before_request(check_private_access)
 
 # Capture incoming Alexa POST payloads so we can show them on the status page
 @app.before_request
@@ -321,6 +342,11 @@ def _request_playback_snapshot():
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
+
+
+@app.route('/privacy')
+def private_privacy_notice():
+    return Response("<h1>Private Alexa music skill</h1><p>This personal development skill is operated by the account owner. Amazon processes Alexa voice requests. The bridge processes skill-scoped user and device IDs and music requests to control the owner's Music Assistant server. Credentials, device mappings and diagnostic request records are stored on the owner's server. YouTube Music supplies music and recommendations. No public registration is offered.</p>", mimetype='text/html')
 
 
 if __name__ == "__main__":
