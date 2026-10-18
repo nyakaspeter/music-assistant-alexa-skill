@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Python 3.14 ships natively in Ubuntu 26.04 (python3.14/python3.14-venv
 # from universe), satisfying music-assistant-client's >=3.11 requirement
 # without a third-party PPA.
-# Node.js 18 via the official NodeSource apt repository (ASK CLI requires a
+# Node.js 26 via the official NodeSource apt repository (ASK CLI requires a
 # modern Node version). The repository is added with a signed-by keyring
 # instead of executing the upstream setup script, so no downloaded artifact
 # is ever executed unverified.
@@ -19,7 +19,7 @@ RUN apt-get update && \
         https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         | gpg --batch --yes --dearmor -o /usr/share/keyrings/nodesource.gpg && \
     printf '%s\n' \
-        'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main' \
+        'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_26.x nodistro main' \
         > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -37,17 +37,23 @@ WORKDIR /app
 COPY app/requirements.lock.txt /app/requirements.lock.txt
 
 # Install ASK CLI (v2) globally so the container can run `ask configure`.
-# Best-effort (--ignore-scripts keeps third-party lifecycle code from running;
-# the || true keeps a registry hiccup from failing the image build).
-# Then create the app venv with pinned, wheel-only pip tooling and apply the
-# verifier.py patch in the same layer (the patch only depends on the venv).
-RUN npm install -g --ignore-scripts ask-cli@2.30.7 || true && \
+# --ignore-scripts keeps third-party lifecycle code from running; the build
+# verifies the CLI actually loads on this Node runtime (`ask --version`)
+# instead of swallowing failures with `|| true`.
+# Then create the app venv with pinned, wheel-only pip tooling and apply two
+# site-packages patches in the same layer (they only depend on the venv):
+# ask_sdk_webservice_support/verifier.py (timezone-aware certificate
+# validation) and certvalidator/registry.py (skip trust roots whose subject
+# cannot be hashed by asn1crypto >= 1.5.1 instead of aborting every request).
+RUN npm install -g --ignore-scripts ask-cli@2.30.7 && \
+    ask --version && \
     python3.14 -m venv venv && \
     . venv/bin/activate && \
     pip install --upgrade --only-binary :all: pip==26.2.1 && \
     pip install --require-hashes --only-binary :all: -r requirements.lock.txt && \
     pip install --only-binary :all: debugpy==1.8.22 && \
-    /app/venv/bin/python - <<'PY'
+    /app/venv/bin/python - <<'PY1' && \
+    /app/venv/bin/python - <<'PY2'
 import sysconfig, os, sys
 try:
         site = sysconfig.get_paths()['purelib']
@@ -95,15 +101,7 @@ if needle in src:
         print('Failed to write patch:', e)
 else:
     print('No patch needed for verifier.py')
-PY
-
-# Apply certvalidator registry.py patch so OS trust-root iteration does not crash
-# with asn1crypto >= 1.5.1. certvalidator 0.11.1 (2016) calls
-# trust_root.subject.hashable for every OS CA cert; asn1crypto 1.5.1 changed
-# NameTypeAndValue internals so that call raises KeyError for certain cert
-# structures present in modern CA stores. Wrap the call in try/except so
-# incompatible trust roots are skipped rather than aborting every Alexa request.
-RUN /app/venv/bin/python - <<'PY'
+PY1
 import sysconfig, os, sys
 try:
         site = sysconfig.get_paths()['purelib']
@@ -159,7 +157,7 @@ if needle in src:
         print('Failed to write patch:', e)
 else:
     print('No patch needed for registry.py (needle not found)')
-PY
+PY2
 
 # Now copy the rest of your source code (commented out for dynamic development)
 COPY app /app/src
