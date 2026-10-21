@@ -343,7 +343,7 @@ def test_station_playback_waits_for_announcement_in_background(intent):
         assert events == []
         hi.response_builder.speak.assert_called_once_with("Starting Rock.")
         thread.call_args.kwargs["target"]()
-    assert events[0] == ("wait", 1.0)
+    assert events[0] == ("wait", v.speaking_time("Starting Rock."))
     assert events[1][0] == "play"
     assert events[1][1][0] == "echo"
     assert events[1][1][1].name == "Rock"
@@ -634,7 +634,10 @@ def test_music_worker_waits_for_original_response_before_ma_play_request():
         v.VoiceMusicHandler().handle(hi)
         assert events == []
         thread.call_args.kwargs["target"]()
-    assert events == [("wait", 1.0), ("play", {"media": "chosen"})]
+    assert events == [
+        ("wait", v.speaking_time("Starting your music.")),
+        ("play", {"media": "chosen"}),
+    ]
 
 
 @run_async

@@ -19,7 +19,10 @@ from music_assistant_models.errors import MediaNotFoundError, MusicAssistantErro
 from . import device_mapping, playback_requests
 
 logger = logging.getLogger(__name__)
-ANNOUNCEMENT_DELAY_SECONDS = 1.0
+# Alexa speaks about 14 characters a second. Music Assistant's command that starts the new
+# stream takes about as long to reach the Echo as Alexa takes to start speaking, so waiting
+# for the speaking time alone lets the answer finish before the music cuts in.
+SPOKEN_CHARACTERS_PER_SECOND = 14
 
 
 @asynccontextmanager
@@ -235,7 +238,7 @@ async def favorite_tracks(client):
     uris = [track.uri for track in tracks if getattr(track, "available", True)]
     if not uris:
         raise ValueError(
-            "You have no favorite songs yet. Say like this song to add one."
+            "You have no favorite songs yet. Say add this song to my favorites to add one."
         )
     random.shuffle(uris)
     return uris
@@ -395,13 +398,24 @@ async def play_recommended(player_id):
     await play_music_selection(selection)
 
 
+def current_track(queue):
+    media = getattr(getattr(queue, "current_item", None), "media_item", None)
+    if media is None or media.media_type != MediaType.TRACK:
+        raise ValueError("Please play a song first.")
+    return media
+
+
+async def check_similar(player_id):
+    """Confirm a song is playing before promising a mix based on it."""
+    async with connection() as client:
+        current_track(await active_queue(client, player_id))
+
+
 async def play_similar(player_id):
     async with connection() as client:
         queue = await active_queue(client, player_id)
-        media = getattr(getattr(queue, "current_item", None), "media_item", None)
-        if media is None or media.media_type != MediaType.TRACK:
-            raise ValueError("Please play a song first.")
-        await start_mix(client, queue.queue_id, media.uri)
+        seed = current_track(queue).uri
+        await start_mix(client, queue.queue_id, seed)
 
 
 async def prepare_resume(player_id):
@@ -756,8 +770,6 @@ HANDLED_INTENTS = (
         "ResumeMusicIntent",
     }
 )
-# These leave the current playback alone, so they do not cancel a pending start.
-KEEPS_PLAYBACK = INFO_INTENTS.keys() | SONG_INTENTS.keys() | {"PlayNextIntent"}
 
 
 def say(response, text):
@@ -772,6 +784,22 @@ def run_now(work, seconds):
             return await work()
 
     return asyncio.run(timed())
+
+
+def speaking_time(text):
+    return len(text) / SPOKEN_CHARACTERS_PER_SECOND
+
+
+def start_after_answer(player, response, message, work, name="voice-playback"):
+    """Answer, then start playback once Alexa has said it; older pending starts end here."""
+    ticket = playback_requests.begin(player)
+
+    async def after_answer():
+        await asyncio.sleep(speaking_time(message))
+        await work()
+
+    run_after_response(player, name, ticket, after_answer)
+    return say(response, message)
 
 
 def run_after_response(player, name, ticket, work):
@@ -807,9 +835,6 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 response,
                 "Please map this Echo to its player in the bridge devices page first.",
             )
-        # Every request that may change playback invalidates older pending starts.
-        ticket = None if name in KEEPS_PLAYBACK else playback_requests.begin(player)
-
         if name in RADIO_INTENTS:
             try:
                 station, queue_id, expected = run_now(
@@ -824,12 +849,13 @@ class VoiceMusicHandler(AbstractRequestHandler):
                     "I could not find a radio station right now. Please try again.",
                 )
 
-            async def start_station():
-                await asyncio.sleep(ANNOUNCEMENT_DELAY_SECONDS)
-                await play_station(player, station, queue_id, expected)
-
-            run_after_response(player, "voice-radio", ticket, start_station)
-            return say(response, "Starting " + station.name + ".")
+            return start_after_answer(
+                player,
+                response,
+                "Starting " + station.name + ".",
+                lambda: play_station(player, station, queue_id, expected),
+                name="voice-radio",
+            )
 
         if (name in MUSIC_INTENTS or name == "PlayNextIntent") and not query.strip():
             return say(response, "Please say a song, artist, album or playlist name.")
@@ -895,19 +921,31 @@ class VoiceMusicHandler(AbstractRequestHandler):
                     "I could not resume your music right now. Please try again.",
                 )
 
-            async def start_resume():
-                await asyncio.sleep(ANNOUNCEMENT_DELAY_SECONDS)
-                await resume_queue(queue_id)
-
-            run_after_response(player, "voice-playback", ticket, start_resume)
             what = describe_item(current) if current is not None else "your music"
-            return say(response, "Resuming " + what + ".")
+            return start_after_answer(
+                player,
+                response,
+                "Resuming " + what + ".",
+                lambda: resume_queue(queue_id),
+            )
 
         if name == "PlaySimilarIntent":
-            run_after_response(
-                player, "voice-playback", ticket, lambda: play_similar(player)
+            try:
+                run_now(lambda: check_similar(player), 5)
+            except ValueError as exc:
+                return say(response, str(exc))
+            except Exception:
+                logger.exception("Similar songs check failed")
+                return say(
+                    response,
+                    "I could not start similar songs right now. Please try again.",
+                )
+            return start_after_answer(
+                player,
+                response,
+                "Switching to similar songs after this track.",
+                lambda: play_similar(player),
             )
-            return say(response, "Switching to similar songs after this track.")
 
         try:
             selection = run_now(
@@ -934,9 +972,9 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 response, "I could not prepare that music right now. Please try again."
             )
 
-        async def start_music():
-            await asyncio.sleep(ANNOUNCEMENT_DELAY_SECONDS)
-            await play_music_selection(selection)
-
-        run_after_response(player, "voice-playback", ticket, start_music)
-        return say(response, "Starting your music.")
+        return start_after_answer(
+            player,
+            response,
+            "Starting your music.",
+            lambda: play_music_selection(selection),
+        )

@@ -123,13 +123,23 @@ class VoiceQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(q.sources, [album])
 
     async def test_shuffle_refuses_non_album_and_dynamic_queues(self):
-        for dynamic in (False, True):
-            q = NS(
-                queue_id="echo",
-                current_index=0,
-                current_item=track("Now"),
-                is_dynamic=dynamic,
-            )
+        album = NS(uri="library://album/1", name="Album", media_type=v.MediaType.ALBUM)
+        non_album = NS(
+            queue_id="echo",
+            current_index=0,
+            current_item=track("Now"),
+            is_dynamic=False,
+        )
+        # A valid album queue except that it is dynamic, so only that guard rejects it.
+        dynamic_album = NS(
+            queue_id="echo",
+            current_index=0,
+            current_item=track("Now", album=album),
+            is_dynamic=True,
+            sources=[album],
+            shuffle_enabled=False,
+        )
+        for q in (non_album, dynamic_album):
             pq = NS(get_active_queue=AsyncMock(return_value=q), move_item=AsyncMock())
             with self.assertRaisesRegex(ValueError, "start an album"):
                 await self.run_with(
