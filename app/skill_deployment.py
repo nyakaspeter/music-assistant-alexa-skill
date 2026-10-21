@@ -232,6 +232,7 @@ def package_fingerprint(files):
     # ZIP metadata varies between exports; compare canonical member content.
     normalized = {}
     for key, content in files.items():
+        key = key.removeprefix("skill-package/")
         if key.endswith(".json"):
             content = canonical_json(content)
         normalized[key] = hashlib.sha256(content).hexdigest()
