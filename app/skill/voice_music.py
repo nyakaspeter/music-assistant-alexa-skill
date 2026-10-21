@@ -404,6 +404,25 @@ async def play_similar(player_id):
         await start_mix(client, queue.queue_id, media.uri)
 
 
+async def prepare_resume(player_id):
+    """Check the Echo's queue can be resumed; return its id and the song it continues."""
+    async with connection() as client:
+        queue = await active_queue(client, player_id)
+    if not queue.items:
+        raise ValueError(
+            "There is nothing to resume. Ask me to play something instead."
+        )
+    if getattr(queue, "state", None) == "playing":
+        raise ValueError("Your music is already playing.")
+    return queue.queue_id, queue.current_item
+
+
+async def resume_queue(queue_id):
+    """Continue the queue where it stopped, as the Music Assistant app's play button does."""
+    async with connection() as client:
+        await playback_requests.write(client.player_queues.resume, queue_id)
+
+
 def current_station(queue):
     media = getattr(getattr(queue, "current_item", None), "media_item", None)
     return media if getattr(media, "media_type", None) == MediaType.RADIO else None
@@ -734,6 +753,7 @@ HANDLED_INTENTS = (
         "PlayRecommendedIntent",
         "PlayFavoritesIntent",
         "PlayNextIntent",
+        "ResumeMusicIntent",
     }
 )
 # These leave the current playback alone, so they do not cancel a pending start.
@@ -862,6 +882,26 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 return say(
                     response, "I could not finish that queue request. Please try again."
                 )
+
+        if name == "ResumeMusicIntent":
+            try:
+                queue_id, current = run_now(lambda: prepare_resume(player), 5)
+            except ValueError as exc:
+                return say(response, str(exc))
+            except Exception:
+                logger.exception("Resume failed")
+                return say(
+                    response,
+                    "I could not resume your music right now. Please try again.",
+                )
+
+            async def start_resume():
+                await asyncio.sleep(ANNOUNCEMENT_DELAY_SECONDS)
+                await resume_queue(queue_id)
+
+            run_after_response(player, "voice-playback", ticket, start_resume)
+            what = describe_item(current) if current is not None else "your music"
+            return say(response, "Resuming " + what + ".")
 
         if name == "PlaySimilarIntent":
             run_after_response(

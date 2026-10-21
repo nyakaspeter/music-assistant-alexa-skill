@@ -198,6 +198,7 @@ The English (US) voice model uses the invocation name **music assistant**:
 | Alexa, ask Music Assistant to add this song to my library                  | Save the current song to the Music Assistant library                      |
 | Alexa, ask Music Assistant to remove this song from my library             | Remove the current song from the Music Assistant library                  |
 | Alexa, ask Music Assistant to play my favorites                            | Play your favorite songs, shuffled                                        |
+| Alexa, ask Music Assistant to resume music                                 | Continue this Echo's queue where it stopped, if it still has songs        |
 | Alexa, ask Music Assistant to shuffle this album / playlist                | Shuffle the remaining tracks once, without turning on shuffle mode        |
 | Alexa, ask Music Assistant what is playing / what is next                  | Announce the current or next song                                         |
 | Alexa, ask Music Assistant what played before this                         | Announce the previous queue entry                                         |
