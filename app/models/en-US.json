@@ -217,6 +217,43 @@
             "change to previous station",
             "change to the previous station"
           ]
+        },
+        {
+          "name": "PlayNextIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": ["play {query} next", "queue {query} next"]
+        },
+        {
+          "name": "LikeSongIntent",
+          "slots": [],
+          "samples": [
+            "like this song",
+            "add this song to my favorites",
+            "add this to my favorites"
+          ]
+        },
+        {
+          "name": "UnlikeSongIntent",
+          "slots": [],
+          "samples": [
+            "unlike this song",
+            "remove this song from my favorites",
+            "remove this from my favorites"
+          ]
+        },
+        {
+          "name": "PlayFavoritesIntent",
+          "slots": [],
+          "samples": [
+            "play my favorites",
+            "play my favorite songs",
+            "play my liked songs"
+          ]
         }
       ],
       "types": []

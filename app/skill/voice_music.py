@@ -128,6 +128,9 @@ async def prepare_music(player_id, query="", kind="track", recommended=False):
         if recommended:
             media = await recommended_seed(client)
             name = "your music"
+        elif kind == "favorites":
+            media = await favorite_tracks(client)
+            name = "your favorites"
         else:
             if kind == "playlist":
                 playlists = await client.music.get_library_playlists(
@@ -212,6 +215,55 @@ async def select_and_play(player_id, query, playlist=False, kind="track"):
     selection = await prepare_music(player_id, query, "playlist" if playlist else kind)
     await play_music_selection(selection)
     return selection["name"]
+
+
+async def play_next(player_id, query):
+    """Insert one song after the current one; a running mix continues after it."""
+    async with connection() as client:
+        queue = await active_queue(client, player_id)
+        if getattr(queue, "current_item", None) is None:
+            raise ValueError("Nothing is playing. Ask me to play the song instead.")
+        track = await find_music(client, query, "track")
+        await client.player_queues.play_media(
+            queue.queue_id, track.uri, option=QueueOption.NEXT
+        )
+        return track.name
+
+
+async def favorite_tracks(client):
+    tracks = await client.music.get_library_tracks(favorite=True, limit=500)
+    uris = [track.uri for track in tracks if getattr(track, "available", True)]
+    if not uris:
+        raise ValueError(
+            "You have no favorite songs yet. Say like this song to add one."
+        )
+    random.shuffle(uris)
+    return uris
+
+
+async def set_favorite(player_id, favorite):
+    """Heart or un-heart the current song, as the Music Assistant app does."""
+    async with connection() as client:
+        queue = await active_queue(client, player_id)
+        track = getattr(getattr(queue, "current_item", None), "media_item", None)
+        if track is None or track.media_type != MediaType.TRACK:
+            raise ValueError("Please play a song first.")
+        if favorite:
+            await client.music.add_item_to_favorites(track.uri)
+            return "Added " + track.name + " to your favorites."
+        library_track = (
+            track
+            if track.provider == "library"
+            else await client.music.get_library_item_by_prov_id(
+                MediaType.TRACK, track.item_id, track.provider
+            )
+        )
+        if library_track is None or not getattr(library_track, "favorite", False):
+            return track.name + " is not in your favorites."
+        await client.music.remove_item_from_favorites(
+            MediaType.TRACK, library_track.item_id
+        )
+        return "Removed " + track.name + " from your favorites."
 
 
 async def library_selection(client):
@@ -634,6 +686,10 @@ SHUFFLE_INTENTS = {
     "ShuffleAlbumIntent": "album",
     "ShufflePlaylistIntent": "playlist",
 }
+FAVORITE_INTENTS = {
+    "LikeSongIntent": True,
+    "UnlikeSongIntent": False,
+}
 RADIO_INTENTS = {
     "StartRadioIntent": "resume",
     "StartStationIntent": "named",
@@ -644,9 +700,17 @@ HANDLED_INTENTS = (
     MUSIC_INTENTS.keys()
     | INFO_INTENTS.keys()
     | SHUFFLE_INTENTS.keys()
+    | FAVORITE_INTENTS.keys()
     | RADIO_INTENTS.keys()
-    | {"PlaySimilarIntent", "PlayRecommendedIntent"}
+    | {
+        "PlaySimilarIntent",
+        "PlayRecommendedIntent",
+        "PlayFavoritesIntent",
+        "PlayNextIntent",
+    }
 )
+# These leave the current playback alone, so they do not cancel a pending start.
+KEEPS_PLAYBACK = INFO_INTENTS.keys() | FAVORITE_INTENTS.keys() | {"PlayNextIntent"}
 
 
 def say(response, text):
@@ -697,7 +761,7 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 "Please map this Echo to its player in the bridge devices page first.",
             )
         # Every request that may change playback invalidates older pending starts.
-        ticket = None if name in INFO_INTENTS else playback_requests.begin(player)
+        ticket = None if name in KEEPS_PLAYBACK else playback_requests.begin(player)
 
         if name in RADIO_INTENTS:
             try:
@@ -720,14 +784,28 @@ class VoiceMusicHandler(AbstractRequestHandler):
             run_after_response(player, "voice-radio", ticket, start_station)
             return say(response, "Starting " + station.name + ".")
 
-        if name in MUSIC_INTENTS and not query.strip():
+        if (name in MUSIC_INTENTS or name == "PlayNextIntent") and not query.strip():
             return say(response, "Please say a song, artist, album or playlist name.")
 
-        if name in INFO_INTENTS or name in SHUFFLE_INTENTS:
+        if name == "PlayNextIntent":
+            try:
+                song = run_now(lambda: play_next(player, query), 6)
+            except ValueError as exc:
+                return say(response, str(exc))
+            except Exception:
+                logger.exception("Play next failed")
+                return say(
+                    response, "I could not queue that song right now. Please try again."
+                )
+            return say(response, song + " will play next.")
+
+        if name in INFO_INTENTS or name in SHUFFLE_INTENTS or name in FAVORITE_INTENTS:
 
             async def queue_request():
                 if name in INFO_INTENTS:
                     return await queue_information(player, INFO_INTENTS[name])
+                if name in FAVORITE_INTENTS:
+                    return await set_favorite(player, FAVORITE_INTENTS[name])
                 await shuffle_selection(player, SHUFFLE_INTENTS[name])
                 return (
                     "The remaining " + SHUFFLE_INTENTS[name] + " tracks are shuffled."
@@ -754,7 +832,9 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 lambda: prepare_music(
                     player,
                     query,
-                    MUSIC_INTENTS.get(name, "track"),
+                    "favorites"
+                    if name == "PlayFavoritesIntent"
+                    else MUSIC_INTENTS.get(name, "track"),
                     recommended=name == "PlayRecommendedIntent",
                 ),
                 6,
