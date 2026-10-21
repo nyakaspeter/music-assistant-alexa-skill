@@ -418,7 +418,7 @@ async def play_similar(player_id):
         await start_mix(client, queue.queue_id, seed)
 
 
-async def prepare_resume(player_id):
+async def prepare_resume(player_id, refuse_playing=True):
     """Check the Echo's queue can be resumed; return its id and the song it continues."""
     async with connection() as client:
         queue = await active_queue(client, player_id)
@@ -426,7 +426,7 @@ async def prepare_resume(player_id):
         raise ValueError(
             "There is nothing to resume. Ask me to play something instead."
         )
-    if getattr(queue, "state", None) == "playing":
+    if refuse_playing and getattr(queue, "state", None) == "playing":
         raise ValueError("Your music is already playing.")
     return queue.queue_id, queue.current_item
 
@@ -784,6 +784,36 @@ def run_now(work, seconds):
             return await work()
 
     return asyncio.run(timed())
+
+
+def music_assistant_configured():
+    return bool(get_env_secret("MA_API_URL") and get_env_secret("MA_API_TOKEN"))
+
+
+def resume_for_alexa(response, player):
+    """Alexa's own resume: continue the MA queue silently, with a fresh stream.
+
+    The stream the Echo had before may be gone after a break, and MA's play button for
+    this player also arrives here, while MA already reports it as playing.
+    """
+    try:
+        queue_id, _current = run_now(
+            lambda: prepare_resume(player, refuse_playing=False), 5
+        )
+    except ValueError as exc:
+        return say(response, str(exc))
+    except Exception:
+        logger.exception("Resume failed")
+        return say(
+            response, "I could not resume your music right now. Please try again."
+        )
+    run_after_response(
+        player,
+        "voice-playback",
+        playback_requests.begin(player),
+        lambda: resume_queue(queue_id),
+    )
+    return response.set_should_end_session(True).response
 
 
 def speaking_time(text):
