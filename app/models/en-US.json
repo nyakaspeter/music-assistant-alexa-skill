@@ -265,6 +265,18 @@
             "remove this song from my library",
             "remove this from my library"
           ]
+        },
+        {
+          "name": "ResumeMusicIntent",
+          "slots": [],
+          "samples": [
+            "resume music",
+            "resume my music",
+            "resume the music",
+            "continue my music",
+            "continue the music",
+            "pick up where I left off"
+          ]
         }
       ],
       "types": []
