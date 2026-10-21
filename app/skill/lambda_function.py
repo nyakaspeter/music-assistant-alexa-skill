@@ -15,7 +15,7 @@ from ask_sdk_core.dispatch_components import (
 )
 from ask_sdk_core.utils import is_intent_name, is_request_type
 
-from . import data, device_mapping, ma_control, util, playback_requests
+from . import data, device_mapping, echo_position, ma_control, util, playback_requests
 
 sb = StandardSkillBuilder()
 logger = logging.getLogger(__name__)
@@ -900,6 +900,10 @@ class APLSupportRequestInterceptor(AbstractRequestInterceptor):
 
     def process(self, handler_input):
         data.begin_request()
+        try:
+            echo_position.record(handler_input.request_envelope)
+        except Exception:
+            logger.exception("Could not record the Echo's playback position")
         player = device_mapping.get_player_for_device(_device_id_from(handler_input))
         if player:
             import shared_store
