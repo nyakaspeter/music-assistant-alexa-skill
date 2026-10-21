@@ -15,7 +15,15 @@ from ask_sdk_core.dispatch_components import (
 )
 from ask_sdk_core.utils import is_intent_name, is_request_type
 
-from . import data, device_mapping, echo_position, ma_control, util, playback_requests
+from . import (
+    data,
+    device_mapping,
+    echo_position,
+    ma_control,
+    playback_requests,
+    util,
+    voice_music,
+)
 
 sb = StandardSkillBuilder()
 logger = logging.getLogger(__name__)
@@ -505,6 +513,12 @@ class ResumeIntentHandler(AbstractRequestHandler):
                 _sanitize_log_value(device_id),
             )
             return handler_input.response_builder.response
+
+        player_id = device_mapping.get_player_for_device(device_id)
+        if player_id and voice_music.music_assistant_configured():
+            return voice_music.resume_for_alexa(
+                handler_input.response_builder, player_id
+            )
 
         _sync_to_ma_unless_echo(handler_input, "resume")
 
@@ -996,9 +1010,7 @@ class ResponseLogger(AbstractResponseInterceptor):
 
 # ############# REGISTER HANDLERS #####################
 # Request Handlers
-from .voice_music import VoiceMusicHandler  # noqa: E402
-
-sb.add_request_handler(VoiceMusicHandler())
+sb.add_request_handler(voice_music.VoiceMusicHandler())
 sb.add_request_handler(CheckAudioInterfaceHandler())
 sb.add_request_handler(SkillEventHandler())
 sb.add_request_handler(LaunchRequestOrPlayAudioHandler())
