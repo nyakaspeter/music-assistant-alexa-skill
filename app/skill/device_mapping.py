@@ -15,7 +15,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = "/data/device_players.json"
+_DEFAULT_PATH = "/app/instance_data/device_players.json"
 _lock = threading.RLock()
 
 
