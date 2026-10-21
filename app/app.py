@@ -229,6 +229,12 @@ def _ingress_response(response):
     return response
 
 
+# Reject other skills before capturing request payloads.
+from private_access import check_private_access  # noqa: E402
+
+app.before_request(check_private_access)
+
+
 # Capture incoming Alexa POST payloads so we can show them on the status page
 def _payload_from_json_body():
     """Parse the Alexa payload from a JSON request body, if present."""
