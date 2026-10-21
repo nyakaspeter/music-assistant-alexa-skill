@@ -252,32 +252,43 @@ async def library_copy(client, track):
         return None
 
 
-async def update_current_song(player_id, collection, add):
-    """Add or remove the current song from favorites or the library, as the app does."""
+async def plan_song_change(player_id, collection, add):
+    """Check the current song now and return (message, change or None).
+
+    Saving to the library also runs Music Assistant's full metadata scan before
+    it answers, which can outlast Alexa's response deadline, so the change itself
+    runs after the response.
+    """
     async with connection() as client:
         queue = await active_queue(client, player_id)
         track = getattr(getattr(queue, "current_item", None), "media_item", None)
         if track is None or track.media_type != MediaType.TRACK:
             raise ValueError("Please play a song first.")
         saved = await library_copy(client, track)
-        present = saved is not None and (
-            collection == "library" or getattr(saved, "favorite", False)
-        )
-        if add == present:
-            state = "already" if add else "not"
-            return f"{track.name} is {state} in your {collection}."
-        if collection == "favorites" and add:
-            await client.music.add_item_to_favorites(track.uri)
-        elif collection == "favorites":
-            await client.music.remove_item_from_favorites(
-                MediaType.TRACK, saved.item_id
-            )
-        elif add:
-            await client.music.add_item_to_library(track.uri)
-        else:
-            await client.music.remove_item_from_library(MediaType.TRACK, saved.item_id)
-        change = "Added {} to" if add else "Removed {} from"
-        return change.format(track.name) + f" your {collection}."
+    present = saved is not None and (
+        collection == "library" or getattr(saved, "favorite", False)
+    )
+    if add == present:
+        state = "already" if add else "not"
+        return f"{track.name} is {state} in your {collection}.", None
+
+    async def change():
+        async with connection() as client:
+            if collection == "favorites" and add:
+                await client.music.add_item_to_favorites(track.uri)
+            elif collection == "favorites":
+                await client.music.remove_item_from_favorites(
+                    MediaType.TRACK, saved.item_id
+                )
+            elif add:
+                await client.music.add_item_to_library(track.uri)
+            else:
+                await client.music.remove_item_from_library(
+                    MediaType.TRACK, saved.item_id
+                )
+
+    action = "Adding {} to" if add else "Removing {} from"
+    return action.format(track.name) + f" your {collection}.", change
 
 
 async def library_selection(client):
@@ -815,13 +826,28 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 )
             return say(response, song + " will play next.")
 
-        if name in INFO_INTENTS or name in SHUFFLE_INTENTS or name in SONG_INTENTS:
+        if name in SONG_INTENTS:
+            try:
+                message, change = run_now(
+                    lambda: plan_song_change(player, *SONG_INTENTS[name]), 5
+                )
+            except ValueError as exc:
+                return say(response, str(exc))
+            except Exception:
+                logger.exception("Song update failed")
+                return say(
+                    response,
+                    "I could not update that song right now. Please try again.",
+                )
+            if change is not None:
+                run_after_response(player, "voice-song-update", None, change)
+            return say(response, message)
+
+        if name in INFO_INTENTS or name in SHUFFLE_INTENTS:
 
             async def queue_request():
                 if name in INFO_INTENTS:
                     return await queue_information(player, INFO_INTENTS[name])
-                if name in SONG_INTENTS:
-                    return await update_current_song(player, *SONG_INTENTS[name])
                 await shuffle_selection(player, SHUFFLE_INTENTS[name])
                 return (
                     "The remaining " + SHUFFLE_INTENTS[name] + " tracks are shuffled."

@@ -58,12 +58,20 @@ def client(current=None, library=None, favorites=(), found=()):
     )
 
 
+async def apply(collection, add):
+    """Answer like the handler, then make the change it schedules."""
+    message, change = await v.plan_song_change("echo", collection, add)
+    if change is not None:
+        await change()
+    return message
+
+
 @run_async
 async def test_add_to_favorites_hearts_the_current_song(connected):
     c = client(track("Teardrop", "ytmusic", "abc"))
     connected(c)
-    message = await v.update_current_song("echo", "favorites", True)
-    assert message == "Added Teardrop to your favorites."
+    message = await apply("favorites", True)
+    assert message == "Adding Teardrop to your favorites."
     c.music.add_item_to_favorites.assert_awaited_once_with("ytmusic://track/abc")
 
 
@@ -72,8 +80,8 @@ async def test_remove_from_favorites_clears_the_heart_of_the_library_copy(connec
     library = track("Teardrop", item_id="12", favorite=True)
     c = client(track("Teardrop", "ytmusic", "abc"), library=library)
     connected(c)
-    message = await v.update_current_song("echo", "favorites", False)
-    assert message == "Removed Teardrop from your favorites."
+    message = await apply("favorites", False)
+    assert message == "Removing Teardrop from your favorites."
     c.music.get_library_item_by_prov_id.assert_awaited_once_with(
         MediaType.TRACK, "abc", "ytmusic"
     )
@@ -101,7 +109,7 @@ async def test_nothing_changes_when_already_in_that_state(
 ):
     c = client(current)
     connected(c)
-    assert await v.update_current_song("echo", collection, add) == message
+    assert await apply(collection, add) == message
     for action in (
         "add_item_to_favorites",
         "remove_item_from_favorites",
@@ -115,8 +123,8 @@ async def test_nothing_changes_when_already_in_that_state(
 async def test_add_to_library_saves_a_provider_song(connected):
     c = client(track("Teardrop", "ytmusic", "abc"))
     connected(c)
-    message = await v.update_current_song("echo", "library", True)
-    assert message == "Added Teardrop to your library."
+    message = await apply("library", True)
+    assert message == "Adding Teardrop to your library."
     c.music.add_item_to_library.assert_awaited_once_with("ytmusic://track/abc")
     c.music.add_item_to_favorites.assert_not_awaited()
 
@@ -126,8 +134,8 @@ async def test_remove_from_library_removes_the_library_copy(connected):
     library = track("Teardrop", item_id="12")
     c = client(track("Teardrop", "ytmusic", "abc"), library=library)
     connected(c)
-    message = await v.update_current_song("echo", "library", False)
-    assert message == "Removed Teardrop from your library."
+    message = await apply("library", False)
+    assert message == "Removing Teardrop from your library."
     c.music.remove_item_from_library.assert_awaited_once_with(MediaType.TRACK, "12")
 
 
@@ -138,7 +146,7 @@ async def test_unknown_library_copy_counts_as_not_saved(connected):
     c = client(track("Teardrop", "ytmusic", "abc"))
     c.music.get_library_item_by_prov_id.side_effect = MediaNotFoundError("gone")
     connected(c)
-    message = await v.update_current_song("echo", "library", False)
+    message = await apply("library", False)
     assert message == "Teardrop is not in your library."
 
 
@@ -146,7 +154,7 @@ async def test_unknown_library_copy_counts_as_not_saved(connected):
 async def test_song_commands_need_a_song_playing(connected):
     connected(client(NS(media_type=MediaType.RADIO, name="BBC")))
     with pytest.raises(ValueError, match="play a song first"):
-        await v.update_current_song("echo", "favorites", True)
+        await v.plan_song_change("echo", "favorites", True)
 
 
 @run_async
@@ -227,18 +235,42 @@ def test_play_next_answers_with_the_song_and_keeps_pending_starts():
         ("RemoveFromLibraryIntent", ("library", False)),
     ],
 )
-def test_song_commands_are_spoken_without_cancelling_pending_starts(intent, args):
+def test_song_changes_answer_first_and_finish_in_the_background(intent, args):
     hi = handler_input(intent)
+    change = AsyncMock()
     with (
         patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
-        patch.object(v, "update_current_song", AsyncMock(return_value="Done.")) as up,
+        patch.object(
+            v, "plan_song_change", AsyncMock(return_value=("Adding A.", change))
+        ) as plan,
         patch.object(v.playback_requests, "begin") as begin,
+        patch.object(v.threading, "Thread") as thread,
     ):
         assert v.VoiceMusicHandler().can_handle(hi)
         v.VoiceMusicHandler().handle(hi)
-    up.assert_awaited_once_with("echo", *args)
-    hi.response_builder.speak.assert_called_once_with("Done.")
+        # The slow Music Assistant call has not run when Alexa gets the answer.
+        change.assert_not_awaited()
+        thread.call_args.kwargs["target"]()
+    plan.assert_awaited_once_with("echo", *args)
+    hi.response_builder.speak.assert_called_once_with("Adding A.")
+    change.assert_awaited_once()
     begin.assert_not_called()
+
+
+def test_song_already_in_that_state_starts_no_background_work():
+    hi = handler_input("AddToLibraryIntent")
+    with (
+        patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
+        patch.object(
+            v,
+            "plan_song_change",
+            AsyncMock(return_value=("A is already in your library.", None)),
+        ),
+        patch.object(v.threading, "Thread") as thread,
+    ):
+        v.VoiceMusicHandler().handle(hi)
+    hi.response_builder.speak.assert_called_once_with("A is already in your library.")
+    thread.assert_not_called()
 
 
 def test_favorites_start_in_the_background():
