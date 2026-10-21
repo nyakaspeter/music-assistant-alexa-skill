@@ -199,5 +199,7 @@ def test_model_has_the_new_phrases():
     }
     assert "play {query} next" in intents["PlayNextIntent"]
     assert "like this song" in intents["LikeSongIntent"]
-    assert "unlike this song" in intents["UnlikeSongIntent"]
+    assert "remove this song from my favorites" in intents["UnlikeSongIntent"]
+    # Too close to "like this song" for Alexa to tell apart.
+    assert "unlike this song" not in intents["UnlikeSongIntent"]
     assert "play my favorites" in intents["PlayFavoritesIntent"]

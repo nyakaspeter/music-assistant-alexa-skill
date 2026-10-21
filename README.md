@@ -36,7 +36,8 @@ The English (US) voice model uses the invocation name **music assistant**:
 | Alexa, ask Music Assistant to play music                                   | Pick a random recommended song and start a mix from it                    |
 | Alexa, ask Music Assistant to play similar songs                           | Replace the upcoming tracks with a mix based on the current song          |
 | Alexa, ask Music Assistant to play Teardrop by Massive Attack next         | Play a song right after the current one; a running mix continues after it |
-| Alexa, ask Music Assistant to like / unlike this song                      | Add or remove the current song from your Music Assistant favorites        |
+| Alexa, ask Music Assistant to like this song                               | Add the current song to your Music Assistant favorites                    |
+| Alexa, ask Music Assistant to remove this song from my favorites           | Remove the current song from your favorites                               |
 | Alexa, ask Music Assistant to play my favorites                            | Play your favorite songs, shuffled                                        |
 | Alexa, ask Music Assistant to shuffle this album / playlist                | Shuffle the remaining tracks once, without turning on shuffle mode        |
 | Alexa, ask Music Assistant what is playing / what is next                  | Announce the current or next song                                         |

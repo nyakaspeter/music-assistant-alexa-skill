@@ -241,9 +241,9 @@
           "name": "UnlikeSongIntent",
           "slots": [],
           "samples": [
-            "unlike this song",
             "remove this song from my favorites",
-            "remove this from my favorites"
+            "remove this from my favorites",
+            "take this song off my favorites"
           ]
         },
         {
