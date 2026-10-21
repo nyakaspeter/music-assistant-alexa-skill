@@ -229,30 +229,41 @@
           "samples": ["play {query} next", "queue {query} next"]
         },
         {
-          "name": "LikeSongIntent",
-          "slots": [],
-          "samples": [
-            "like this song",
-            "add this song to my favorites",
-            "add this to my favorites"
-          ]
-        },
-        {
-          "name": "UnlikeSongIntent",
-          "slots": [],
-          "samples": [
-            "remove this song from my favorites",
-            "remove this from my favorites",
-            "take this song off my favorites"
-          ]
-        },
-        {
           "name": "PlayFavoritesIntent",
           "slots": [],
           "samples": [
             "play my favorites",
             "play my favorite songs",
             "play my liked songs"
+          ]
+        },
+        {
+          "name": "AddFavoriteIntent",
+          "slots": [],
+          "samples": [
+            "add this song to my favorites",
+            "add this to my favorites"
+          ]
+        },
+        {
+          "name": "RemoveFavoriteIntent",
+          "slots": [],
+          "samples": [
+            "remove this song from my favorites",
+            "remove this from my favorites"
+          ]
+        },
+        {
+          "name": "AddToLibraryIntent",
+          "slots": [],
+          "samples": ["add this song to my library", "add this to my library"]
+        },
+        {
+          "name": "RemoveFromLibraryIntent",
+          "slots": [],
+          "samples": [
+            "remove this song from my library",
+            "remove this from my library"
           ]
         }
       ],
