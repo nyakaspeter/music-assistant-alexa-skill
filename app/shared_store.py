@@ -41,11 +41,17 @@ def set_alexa(payload):
 
 
 def player_from_stream(url):
-    """Stock MA stream URLs identify the output player in the final filename."""
+    """Stock MA stream URLs identify the output player in the final filename.
+
+    Queue streams are /flow|single/<session>/<queue>/<item>/<player>.<fmt>; plugin
+    sources (e.g. line-in) are /source/<session>/<source player>/<player>.<fmt>.
+    """
     if not isinstance(url, str):
         return None
     parts = urlsplit(url).path.strip("/").split("/")
-    if len(parts) < 5 or parts[-5] not in ("flow", "single"):
+    queue_stream = len(parts) >= 5 and parts[-5] in ("flow", "single")
+    source_stream = len(parts) >= 4 and parts[-4] == "source"
+    if not queue_stream and not source_stream:
         return None
     filename, separator, extension = parts[-1].rpartition(".")
     if not separator or extension not in ("mp3", "flac", "wav", "aac", "pcm", "ogg"):

@@ -3,7 +3,8 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from skill import ma_control, playback_requests
+from skill import device_mapping, ma_control, playback_requests
+from test_playback import event, invoke
 
 
 def test_newer_request_and_stop_cancel_pending_start():
@@ -50,3 +51,12 @@ def test_waiting_old_write_is_cancelled_before_it_can_mutate_queue():
         operation.assert_not_awaited()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("intent", ["AMAZON.StopIntent", "AMAZON.PauseIntent"])
+def test_spoken_stop_or_pause_cancels_a_pending_start(intent):
+    device_mapping.set_player_for_device("echo-1", "Echo Dot 1")
+    pending = playback_requests.begin("Echo Dot 1")
+    with patch.object(ma_control, "send_player_command", return_value=True):
+        invoke(event("IntentRequest", intent=intent))
+    assert not playback_requests.current(pending)

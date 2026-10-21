@@ -43,12 +43,12 @@ def test_stream_snapshot_stays_consistent_if_another_push_arrives_during_request
     original = handlers._get_stream_url
 
     def interleave(request):
-        value = original(request)
+        # A push for another player lands mid-request; the pinned snapshot must win.
         push(
             client,
             streamUrl="http://ma.local:8097/flow/session/other/item/Echo%20Dot%203.mp3",
         )
-        return value
+        return original(request)
 
     with patch("skill.lambda_function._get_stream_url", side_effect=interleave):
         response = invoke(event("IntentRequest", intent="PlayAudio"))
@@ -63,3 +63,8 @@ def test_stream_snapshot_stays_consistent_if_another_push_arrives_during_request
 )
 def test_only_canonical_ma_stream_paths_identify_players(url):
     assert shared_store.player_from_stream(url) is None
+
+
+def test_plugin_source_streams_identify_their_player():
+    url = "http://ma.local:8097/source/session/linein/Echo%20Dot%201.mp3"
+    assert shared_store.player_from_stream(url) == "Echo Dot 1"
