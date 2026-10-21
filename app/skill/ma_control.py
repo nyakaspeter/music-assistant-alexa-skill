@@ -30,6 +30,7 @@ from music_assistant_client.exceptions import (
 from music_assistant_models.errors import MusicAssistantError
 
 from env_secrets import get_env_secret
+from . import playback_requests
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,8 @@ def send_player_command(player_id, command):
         return False
 
     try:
-        asyncio.run(_send_command(server_url, token, player_id, command))
+        with playback_requests.write_lock(player_id):
+            asyncio.run(_send_command(server_url, token, player_id, command))
         return True
     except (CannotConnect, ConnectionFailed, InvalidServerVersion) as e:
         logger.exception(

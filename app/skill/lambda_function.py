@@ -15,7 +15,7 @@ from ask_sdk_core.dispatch_components import (
 )
 from ask_sdk_core.utils import is_intent_name, is_request_type
 
-from . import data, device_mapping, ma_control, util
+from . import data, device_mapping, ma_control, util, playback_requests
 
 sb = StandardSkillBuilder()
 logger = logging.getLogger(__name__)
@@ -341,6 +341,8 @@ def _sync_to_ma_unless_echo(handler_input, command):
     if not player_id:
         return
 
+    if command in ("stop", "pause"):
+        playback_requests.begin(player_id)
     ma_control.mark_ma_triggered(device_id, command)
     if not ma_control.send_player_command(player_id, command):
         logger.warning(
@@ -898,6 +900,11 @@ class APLSupportRequestInterceptor(AbstractRequestInterceptor):
 
     def process(self, handler_input):
         data.begin_request()
+        player = device_mapping.get_player_for_device(_device_id_from(handler_input))
+        if player:
+            import shared_store
+
+            data.select_stream(shared_store.get_player_snapshot(player))
         context = getattr(handler_input.request_envelope, "context", None)
         system = getattr(context, "system", None)
         device = getattr(system, "device", None)
@@ -985,6 +992,9 @@ class ResponseLogger(AbstractResponseInterceptor):
 
 # ############# REGISTER HANDLERS #####################
 # Request Handlers
+from .voice_music import VoiceMusicHandler  # noqa: E402
+
+sb.add_request_handler(VoiceMusicHandler())
 sb.add_request_handler(CheckAudioInterfaceHandler())
 sb.add_request_handler(SkillEventHandler())
 sb.add_request_handler(LaunchRequestOrPlayAudioHandler())
