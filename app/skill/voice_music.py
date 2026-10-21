@@ -14,7 +14,7 @@ from ask_sdk_core.dispatch_components import AbstractRequestHandler
 from env_secrets import get_env_secret
 from music_assistant_client import MusicAssistantClient
 from music_assistant_models.enums import MediaType, QueueOption
-from music_assistant_models.errors import MusicAssistantError
+from music_assistant_models.errors import MediaNotFoundError, MusicAssistantError
 
 from . import device_mapping, playback_requests
 
@@ -241,29 +241,43 @@ async def favorite_tracks(client):
     return uris
 
 
-async def set_favorite(player_id, favorite):
-    """Heart or un-heart the current song, as the Music Assistant app does."""
+async def library_copy(client, track):
+    if track.provider == "library":
+        return track
+    try:
+        return await client.music.get_library_item_by_prov_id(
+            MediaType.TRACK, track.item_id, track.provider
+        )
+    except MediaNotFoundError:
+        return None
+
+
+async def update_current_song(player_id, collection, add):
+    """Add or remove the current song from favorites or the library, as the app does."""
     async with connection() as client:
         queue = await active_queue(client, player_id)
         track = getattr(getattr(queue, "current_item", None), "media_item", None)
         if track is None or track.media_type != MediaType.TRACK:
             raise ValueError("Please play a song first.")
-        if favorite:
+        saved = await library_copy(client, track)
+        present = saved is not None and (
+            collection == "library" or getattr(saved, "favorite", False)
+        )
+        if add == present:
+            state = "already" if add else "not"
+            return f"{track.name} is {state} in your {collection}."
+        if collection == "favorites" and add:
             await client.music.add_item_to_favorites(track.uri)
-            return "Added " + track.name + " to your favorites."
-        library_track = (
-            track
-            if track.provider == "library"
-            else await client.music.get_library_item_by_prov_id(
-                MediaType.TRACK, track.item_id, track.provider
+        elif collection == "favorites":
+            await client.music.remove_item_from_favorites(
+                MediaType.TRACK, saved.item_id
             )
-        )
-        if library_track is None or not getattr(library_track, "favorite", False):
-            return track.name + " is not in your favorites."
-        await client.music.remove_item_from_favorites(
-            MediaType.TRACK, library_track.item_id
-        )
-        return "Removed " + track.name + " from your favorites."
+        elif add:
+            await client.music.add_item_to_library(track.uri)
+        else:
+            await client.music.remove_item_from_library(MediaType.TRACK, saved.item_id)
+        change = "Added {} to" if add else "Removed {} from"
+        return change.format(track.name) + f" your {collection}."
 
 
 async def library_selection(client):
@@ -686,9 +700,11 @@ SHUFFLE_INTENTS = {
     "ShuffleAlbumIntent": "album",
     "ShufflePlaylistIntent": "playlist",
 }
-FAVORITE_INTENTS = {
-    "LikeSongIntent": True,
-    "UnlikeSongIntent": False,
+SONG_INTENTS = {
+    "AddFavoriteIntent": ("favorites", True),
+    "RemoveFavoriteIntent": ("favorites", False),
+    "AddToLibraryIntent": ("library", True),
+    "RemoveFromLibraryIntent": ("library", False),
 }
 RADIO_INTENTS = {
     "StartRadioIntent": "resume",
@@ -700,7 +716,7 @@ HANDLED_INTENTS = (
     MUSIC_INTENTS.keys()
     | INFO_INTENTS.keys()
     | SHUFFLE_INTENTS.keys()
-    | FAVORITE_INTENTS.keys()
+    | SONG_INTENTS.keys()
     | RADIO_INTENTS.keys()
     | {
         "PlaySimilarIntent",
@@ -710,7 +726,7 @@ HANDLED_INTENTS = (
     }
 )
 # These leave the current playback alone, so they do not cancel a pending start.
-KEEPS_PLAYBACK = INFO_INTENTS.keys() | FAVORITE_INTENTS.keys() | {"PlayNextIntent"}
+KEEPS_PLAYBACK = INFO_INTENTS.keys() | SONG_INTENTS.keys() | {"PlayNextIntent"}
 
 
 def say(response, text):
@@ -799,13 +815,13 @@ class VoiceMusicHandler(AbstractRequestHandler):
                 )
             return say(response, song + " will play next.")
 
-        if name in INFO_INTENTS or name in SHUFFLE_INTENTS or name in FAVORITE_INTENTS:
+        if name in INFO_INTENTS or name in SHUFFLE_INTENTS or name in SONG_INTENTS:
 
             async def queue_request():
                 if name in INFO_INTENTS:
                     return await queue_information(player, INFO_INTENTS[name])
-                if name in FAVORITE_INTENTS:
-                    return await set_favorite(player, FAVORITE_INTENTS[name])
+                if name in SONG_INTENTS:
+                    return await update_current_song(player, *SONG_INTENTS[name])
                 await shuffle_selection(player, SHUFFLE_INTENTS[name])
                 return (
                     "The remaining " + SHUFFLE_INTENTS[name] + " tracks are shuffled."

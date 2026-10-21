@@ -21,31 +21,6 @@ This project provides the Alexa skill service for Music Assistant, with a Flask 
 
 For Home Assistant Supervisor, use the maintained [Music Assistant Alexa API add-on](https://github.com/timlaing/music-assistant-alexa-api). This skill repository contains the application; the companion repository packages and configures it for Home Assistant.
 
-## Voice commands
-
-The English (US) voice model uses the invocation name **music assistant**:
-
-| Command                                                                    | Behavior                                                                  |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Alexa, ask Music Assistant to play Teardrop                                | Find a song and start a similar-song mix                                  |
-| Alexa, ask Music Assistant to play One by Metallica                        | Match the song title and artist                                           |
-| Alexa, ask Music Assistant to play songs by Linkin Park                    | Queue the artist's tracks                                                 |
-| Alexa, ask Music Assistant to play the album Hybrid Theory                 | Queue an album in order                                                   |
-| Alexa, ask Music Assistant to play the album One More Light by Linkin Park | Match the album title and artist                                          |
-| Alexa, ask Music Assistant to play my playlist Favorites                   | Play a library playlist                                                   |
-| Alexa, ask Music Assistant to play music                                   | Pick a random recommended song and start a mix from it                    |
-| Alexa, ask Music Assistant to play similar songs                           | Replace the upcoming tracks with a mix based on the current song          |
-| Alexa, ask Music Assistant to play Teardrop by Massive Attack next         | Play a song right after the current one; a running mix continues after it |
-| Alexa, ask Music Assistant to like this song                               | Add the current song to your Music Assistant favorites                    |
-| Alexa, ask Music Assistant to remove this song from my favorites           | Remove the current song from your favorites                               |
-| Alexa, ask Music Assistant to play my favorites                            | Play your favorite songs, shuffled                                        |
-| Alexa, ask Music Assistant to shuffle this album / playlist                | Shuffle the remaining tracks once, without turning on shuffle mode        |
-| Alexa, ask Music Assistant what is playing / what is next                  | Announce the current or next song                                         |
-| Alexa, ask Music Assistant what played before this                         | Announce the previous queue entry                                         |
-| Alexa, ask Music Assistant to start radio                                  | Resume this Echo's current or last station, or pick a random saved one    |
-| Alexa, ask Music Assistant to start BBC Radio 6 Music                      | Start a station saved in the Music Assistant radio library                |
-| Alexa, ask Music Assistant to change to next / previous station            | Move through saved stations alphabetically, only while radio is playing   |
-
 ## How to Run
 
 #### Prerequisites
@@ -202,6 +177,33 @@ For stable **1.3.0**, edit application settings on `/setup`; standalone environm
 
 - `SKILL_HOSTNAME` must refer to a public HTTPS endpoint reachable by Amazon; it is embedded in the skill manifest and used for endpoint validation.
 - If you override `PORT` or `DEBUG_PORT`, update the `ports` mapping in [docker-compose.yml](docker-compose.yml) accordingly (host:container).
+
+## Voice commands
+
+The English (US) voice model uses the invocation name **music assistant**:
+
+| Command                                                                    | Behavior                                                                  |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Alexa, ask Music Assistant to play Teardrop                                | Find a song and start a similar-song mix                                  |
+| Alexa, ask Music Assistant to play One by Metallica                        | Match the song title and artist                                           |
+| Alexa, ask Music Assistant to play songs by Linkin Park                    | Queue the artist's tracks                                                 |
+| Alexa, ask Music Assistant to play the album Hybrid Theory                 | Queue an album in order                                                   |
+| Alexa, ask Music Assistant to play the album One More Light by Linkin Park | Match the album title and artist                                          |
+| Alexa, ask Music Assistant to play my playlist Favorites                   | Play a library playlist                                                   |
+| Alexa, ask Music Assistant to play music                                   | Pick a random recommended song and start a mix from it                    |
+| Alexa, ask Music Assistant to play similar songs                           | Replace the upcoming tracks with a mix based on the current song          |
+| Alexa, ask Music Assistant to play Teardrop by Massive Attack next         | Play a song right after the current one; a running mix continues after it |
+| Alexa, ask Music Assistant to add this song to my favorites                | Heart the current song in Music Assistant                                 |
+| Alexa, ask Music Assistant to remove this song from my favorites           | Remove the heart from the current song                                    |
+| Alexa, ask Music Assistant to add this song to my library                  | Save the current song to the Music Assistant library                      |
+| Alexa, ask Music Assistant to remove this song from my library             | Remove the current song from the Music Assistant library                  |
+| Alexa, ask Music Assistant to play my favorites                            | Play your favorite songs, shuffled                                        |
+| Alexa, ask Music Assistant to shuffle this album / playlist                | Shuffle the remaining tracks once, without turning on shuffle mode        |
+| Alexa, ask Music Assistant what is playing / what is next                  | Announce the current or next song                                         |
+| Alexa, ask Music Assistant what played before this                         | Announce the previous queue entry                                         |
+| Alexa, ask Music Assistant to start radio                                  | Resume this Echo's current or last station, or pick a random saved one    |
+| Alexa, ask Music Assistant to start BBC Radio 6 Music                      | Start a station saved in the Music Assistant radio library                |
+| Alexa, ask Music Assistant to change to next / previous station            | Move through saved stations alphabetically, only while radio is playing   |
 
 ## Basic Troubleshooting
 
