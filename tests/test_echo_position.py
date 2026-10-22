@@ -69,12 +69,17 @@ def test_a_report_for_an_older_stream_is_not_current(playing):
     assert echo_position.report("Echo Dot 1")["current"] is False
 
 
-def test_unmapped_echos_are_not_recorded(client):
-    invoke(event("AudioPlayer.PlaybackStarted", token=ECHO_TOKEN, offset=5_000))
+def test_unmapped_playback_events_need_a_music_assistant_stream(client):
+    invoke(
+        event("AudioPlayer.PlaybackStarted", token="https://x/other.mp3", offset=5_000)
+    )
     assert echo_position.report("Echo Dot 1") == {
         "playerId": "Echo Dot 1",
         "current": False,
     }
+    # Before Music Assistant pushed that player's stream, the report is not current.
+    invoke(event("AudioPlayer.PlaybackStarted", token=ECHO_TOKEN, offset=5_000))
+    assert echo_position.report("Echo Dot 1")["current"] is False
 
 
 def test_endpoint_returns_the_report_to_music_assistant(playing):
@@ -92,3 +97,29 @@ def test_endpoint_needs_credentials_and_a_player(client):
     query = {"player_id": "Echo Dot 1"}
     assert client.get("/alexa/playback-state", query_string=query).status_code == 401
     assert client.get("/alexa/playback-state", headers=AUTH).status_code == 400
+
+
+def test_a_speaker_groups_playback_events_count_for_its_player(playing):
+    # A group member pauses for a voice request; the group resumes under its own device ID.
+    invoke(event("AudioPlayer.PlaybackStopped", token=ECHO_TOKEN, offset=90_500))
+    invoke(
+        event(
+            "AudioPlayer.PlaybackStarted",
+            device="alexa-group",
+            token=ECHO_TOKEN,
+            offset=90_500,
+        )
+    )
+    report = echo_position.report("Echo Dot 1")
+    assert (report["activity"], report["current"]) == ("PLAYING", True)
+
+
+def test_unmapped_voice_requests_are_still_ignored(playing):
+    payload = event("IntentRequest", device="other-echo", intent="AMAZON.HelpIntent")
+    payload["context"]["AudioPlayer"].update(token=ECHO_TOKEN, offsetInMilliseconds=1)
+    payload["context"]["AudioPlayer"]["playerActivity"] = "STOPPED"
+    invoke(payload)
+    assert echo_position.report("Echo Dot 1") == {
+        "playerId": "Echo Dot 1",
+        "current": False,
+    }
