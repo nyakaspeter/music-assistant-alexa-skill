@@ -1,6 +1,24 @@
+import hashlib
 import os
+import secrets
 
 from app_settings import saved_secret
+
+# Per-process salt. An unreadable secret file must never fall back to the
+# path itself, because that path would then be compared as the credential.
+_UNREADABLE_SALT = secrets.token_bytes(32)
+
+
+def _unreadable_secret(name):
+    """An unguessable stand-in for a configured but unreadable secret.
+
+    Returning None instead would read as "not configured", which lets the
+    auth checks skip enforcement entirely, and returning the path would make
+    the path the credential. This value is per-name (so username and password
+    never collapse into one guessable string) and unguessable per process, so
+    every comparison against it fails until the file is readable again.
+    """
+    return hashlib.sha256(_UNREADABLE_SALT + name.encode()).hexdigest()
 
 
 def get_env_secret(name: str):
@@ -21,6 +39,6 @@ def get_env_secret(name: str):
             with open(val, "r") as fh:
                 return fh.read().strip()
     except Exception:
-        # Fall back to returning the raw env value on any error
-        return val
+        # Fail closed rather than returning the configured path.
+        return _unreadable_secret(name)
     return val
