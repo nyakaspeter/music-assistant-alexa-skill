@@ -5,9 +5,10 @@ import json
 import logging
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
-from flask import Response, request
+from flask import Response, current_app, request
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +63,40 @@ def get_allowed_skill_id():
     # verification the wizard actually recorded — "complete" marks
     # Amazon-confirmed enablement, and verified_at survives a wizard re-entry
     # (prepare keeps it) but is cleared whenever a new deployment is prepared
-    # (deploy) or only attested by the owner (reconcile).
+    # (deploy) or only attested by the owner (reconcile). The read and the
+    # derived write run under the deployment manager's lock so a concurrent
+    # deploy()/reconcile() cannot clear the verification between them and
+    # leave an outdated skill ID authorized.
     try:
-        state = json.loads(deployment_path().read_text())
-        value = state.get("skill_id")
-        if not isinstance(value, str) or not value:
-            return None
-        verified_at = state.get("verified_at")
-        if state.get("phase") == "complete" or isinstance(verified_at, (int, float)):
-            save_allowed_skill_id(value)
-            return value
+        with _migration_lock():
+            state = json.loads(deployment_path().read_text())
+            value = state.get("skill_id")
+            if not isinstance(value, str) or not value:
+                return None
+            verified_at = state.get("verified_at")
+            if state.get("phase") == "complete" or isinstance(
+                verified_at, (int, float)
+            ):
+                save_allowed_skill_id(value)
+                return value
     except (OSError, ValueError, AttributeError):
         pass
     return None
+
+
+def _migration_lock():
+    """Lock deployment state while deriving access, when a manager exists.
+
+    Skill-deployment writes take the manager's lock, so holding it here makes
+    the state read and the skill-access.json write atomic against them. In
+    minimal setups without the skill-deployment extension there is nothing
+    concurrent to serialise against, and the migration stays unlocked.
+    """
+    try:
+        manager = current_app.extensions.get("skill_deployment")
+    except RuntimeError:  # Outside an application context.
+        manager = None
+    return manager.lock if manager is not None else nullcontext()
 
 
 def check_private_access():

@@ -1,5 +1,6 @@
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import private_access
@@ -47,6 +48,48 @@ def test_corrupt_access_file_does_not_fall_back(tmp_path, monkeypatch):
     state.write_text(json.dumps({"phase": "complete", "skill_id": "old"}))
     access.access_path().write_text("invalid")
     assert access.get_allowed_skill_id() is None
+
+
+class RecordingLock:
+    """Stand-in for the deployment manager's state lock."""
+
+    def __init__(self):
+        self.held = False
+        self.acquisitions = 0
+
+    def __enter__(self):
+        self.held = True
+        self.acquisitions += 1
+        return self
+
+    def __exit__(self, *exc_info):
+        self.held = False
+        return False
+
+
+def test_migration_holds_state_lock_during_derivation(tmp_path, monkeypatch):
+    # A deploy can rewrite the deployment state between the migration's read
+    # and its derived write; the migration must hold the same lock as every
+    # deployment-state write so it cannot authorise an outdated skill ID.
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    state.write_text(json.dumps({"phase": "complete", "skill_id": "verified"}))
+    state_lock = RecordingLock()
+    held_during_save = []
+    real_save = access.save_allowed_skill_id
+
+    def spy(skill_id, state_path=None):
+        held_during_save.append(state_lock.held)
+        real_save(skill_id, state_path)
+
+    monkeypatch.setattr(access, "save_allowed_skill_id", spy)
+    app = Flask(__name__)
+    app.extensions["skill_deployment"] = SimpleNamespace(lock=state_lock)
+    with app.app_context():
+        assert access.get_allowed_skill_id() == "verified"
+    assert held_during_save == [True]
+    assert state_lock.held is False
+    assert state_lock.acquisitions == 1
 
 
 class PrivateAccessTests(unittest.TestCase):
