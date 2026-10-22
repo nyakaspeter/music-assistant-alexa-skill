@@ -68,3 +68,17 @@ def test_only_canonical_ma_stream_paths_identify_players(url):
 def test_plugin_source_streams_identify_their_player():
     url = "http://ma.local:8097/source/session/linein/Echo%20Dot%201.mp3"
     assert shared_store.player_from_stream(url) == "Echo Dot 1"
+
+
+def test_pushed_player_id_wins_over_the_stream_url(client):
+    device_mapping.set_player_for_device("echo-1", "Kitchen")
+    push(
+        client,
+        streamUrl="http://ma.local:8097/flow/session/queue/item/kitchen-uuid.mp3",
+        playerId="Kitchen",
+    )
+    response = invoke(event("IntentRequest", device="echo-1", intent="PlayAudio"))
+    assert response["directives"][0]["audioItem"]["stream"]["url"].endswith(
+        "/kitchen-uuid.mp3"
+    )
+    assert shared_store.get_ma()["playerId"] == "Kitchen"
