@@ -77,7 +77,13 @@ def get_allowed_skill_id():
             if state.get("phase") == "complete" or isinstance(
                 verified_at, (int, float)
             ):
-                save_allowed_skill_id(value)
+                try:
+                    save_allowed_skill_id(value)
+                except OSError:
+                    # The state file is the authority; skill-access.json only
+                    # caches it and is re-derived on the next request. An
+                    # unwritable cache must not deny a verified skill.
+                    logger.warning("Cannot persist the Alexa skill restriction")
                 return value
     except (OSError, ValueError, AttributeError):
         pass
