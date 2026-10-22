@@ -32,6 +32,10 @@ def set_ma(payload):
         _ma.update(playerId=player, version=_version, timestamp=time.time())
         if player and payload.get("streamUrl"):
             _player_snapshots[player] = deepcopy(_ma)
+        elif not player:
+            # The push may replace any player's stream; serve it to all, as upstream
+            # does, rather than an older per-player stream.
+            _player_snapshots.clear()
         return _version
 
 

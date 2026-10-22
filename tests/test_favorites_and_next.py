@@ -82,7 +82,8 @@ async def test_remove_from_favorites_clears_the_heart_of_the_library_copy(connec
     connected(c)
     message = await apply("favorites", False)
     assert message == "Removing Teardrop from your favorites."
-    c.music.get_library_item_by_prov_id.assert_awaited_once_with(
+    # Checked when answering, and again when the change runs.
+    c.music.get_library_item_by_prov_id.assert_awaited_with(
         MediaType.TRACK, "abc", "ytmusic"
     )
     c.music.remove_item_from_favorites.assert_awaited_once_with(MediaType.TRACK, "12")
@@ -309,3 +310,43 @@ def test_model_has_the_new_phrases():
     samples = [sample for phrases in intents.values() for sample in phrases]
     assert "like this song" not in samples and "unlike this song" not in samples
     assert "play my favorites" in intents["PlayFavoritesIntent"]
+
+
+@run_async
+async def test_remove_right_after_add_wins_before_the_add_has_run(connected):
+    c = client(track("Teardrop", "ytmusic", "abc"), library=None)
+    connected(c)
+    _, add = await v.plan_song_change("echo", "favorites", True)
+    message, remove = await v.plan_song_change("echo", "favorites", False)
+    assert message == "Removing Teardrop from your favorites."
+    await add()
+    await remove()
+    c.music.add_item_to_favorites.assert_not_awaited()
+    c.music.remove_item_from_favorites.assert_not_awaited()
+
+
+@run_async
+async def test_change_rechecks_the_song_when_it_runs(connected):
+    c = client(track("Teardrop", "ytmusic", "abc"), library=None)
+    connected(c)
+    _, add = await v.plan_song_change("echo", "favorites", True)
+    # Hearted elsewhere meanwhile: nothing left to do.
+    c.music.get_library_item_by_prov_id.return_value = track(
+        "Teardrop", item_id="12", favorite=True
+    )
+    await add()
+    c.music.add_item_to_favorites.assert_not_awaited()
+
+
+def test_redelivered_play_next_does_not_queue_the_song_twice():
+    hi = handler_input("PlayNextIntent", "Teardrop")
+    hi.request_envelope.request.request_id = "amzn1.echo-api.request.1"
+    play_next = AsyncMock(return_value="Teardrop")
+    with (
+        patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
+        patch.object(v, "play_next", play_next),
+    ):
+        v.VoiceMusicHandler().handle(hi)
+        v.VoiceMusicHandler().handle(hi)
+    play_next.assert_awaited_once()
+    assert hi.response_builder.speak.call_count == 2

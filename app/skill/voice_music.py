@@ -1,10 +1,12 @@
 """Spoken music selection and queue controls using Music Assistant's APIs."""
 
 import asyncio
+import itertools
 import logging
 import random
 import re
 import threading
+import time
 import unicodedata
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
@@ -30,6 +32,18 @@ logger = logging.getLogger(__name__)
 # stream takes about as long to reach the Echo as Alexa takes to start speaking, so waiting
 # for the speaking time alone lets the answer finish before the music cuts in.
 SPOKEN_CHARACTERS_PER_SECOND = 14
+
+# Favorite/library changes run after the answer, one at a time; the latest request for
+# a song decides its state, even when an earlier change has not run yet.
+_song_changes_lock = threading.Lock()
+_song_change_order = threading.Lock()
+_latest_song_changes = {}
+_song_change_requests = itertools.count()
+
+# A redelivered "play next" request must not queue the song twice.
+PLAY_NEXT_REPEAT_SECONDS = 300
+_play_next_lock = threading.Lock()
+_recent_play_next = {}
 
 
 @asynccontextmanager
@@ -284,6 +298,23 @@ async def library_copy(client, track):
         return None
 
 
+def in_collection(saved, collection):
+    return saved is not None and (
+        collection == "library" or getattr(saved, "favorite", False)
+    )
+
+
+async def apply_song_change(client, collection, add, track, saved):
+    if collection == "favorites" and add:
+        await client.music.add_item_to_favorites(track.uri)
+    elif collection == "favorites":
+        await client.music.remove_item_from_favorites(MediaType.TRACK, saved.item_id)
+    elif add:
+        await client.music.add_item_to_library(track.uri)
+    else:
+        await client.music.remove_item_from_library(MediaType.TRACK, saved.item_id)
+
+
 async def plan_song_change(player_id, collection, add):
     """Check the current song now and return (message, change or None).
 
@@ -297,27 +328,35 @@ async def plan_song_change(player_id, collection, add):
         if track is None or track.media_type != MediaType.TRACK:
             raise ValueError("Please play a song first.")
         saved = await library_copy(client, track)
-    present = saved is not None and (
-        collection == "library" or getattr(saved, "favorite", False)
-    )
-    if add == present:
-        state = "already" if add else "not"
-        return f"{track.name} is {state} in your {collection}.", None
+    key = (collection, track.uri)
+    with _song_changes_lock:
+        latest = _latest_song_changes.get(key)
+        # A change that has not run yet decides what the song will be.
+        present = latest[0] if latest else in_collection(saved, collection)
+        if add == present:
+            state = "already" if add else "not"
+            return f"{track.name} is {state} in your {collection}.", None
+        request = next(_song_change_requests)
+        _latest_song_changes[key] = (add, request)
+
+    def is_latest():
+        with _song_changes_lock:
+            return _latest_song_changes.get(key, (None, None))[1] == request
 
     async def change():
-        async with connection() as client:
-            if collection == "favorites" and add:
-                await client.music.add_item_to_favorites(track.uri)
-            elif collection == "favorites":
-                await client.music.remove_item_from_favorites(
-                    MediaType.TRACK, saved.item_id
-                )
-            elif add:
-                await client.music.add_item_to_library(track.uri)
-            else:
-                await client.music.remove_item_from_library(
-                    MediaType.TRACK, saved.item_id
-                )
+        try:
+            with _song_change_order:
+                if not is_latest():
+                    return  # a later request for this song decides
+                async with connection() as client:
+                    saved = await library_copy(client, track)
+                    if add == in_collection(saved, collection):
+                        return
+                    await apply_song_change(client, collection, add, track, saved)
+        finally:
+            with _song_changes_lock:
+                if _latest_song_changes.get(key, (None, None))[1] == request:
+                    del _latest_song_changes[key]
 
     action = "Adding {} to" if add else "Removing {} from"
     return action.format(track.name) + f" your {collection}.", change
@@ -750,8 +789,10 @@ async def shuffle_selection(player_id, kind):
         random.shuffle(order)
         if order == items:
             order = order[1:] + order[:1]
-        ids = [item.queue_item_id for item in items]
-        for target, item in enumerate(order):
+        original = [item.queue_item_id for item in items]
+        ids = list(original)
+
+        async def unchanged_playback():
             latest = await active_queue(client, player_id)
             if (
                 latest.queue_id != queue.queue_id
@@ -760,12 +801,35 @@ async def shuffle_selection(player_id, kind):
                 or latest.index_in_buffer != queue.index_in_buffer
             ):
                 raise ValueError("Playback advanced while shuffling. Please try again.")
-            position = ids.index(item.queue_item_id)
-            if position != target:
-                await client.player_queues.move_item(
-                    queue.queue_id, item.queue_item_id, pos_shift=target - position
-                )
-                ids.insert(target, ids.pop(position))
+
+        try:
+            await reorder(
+                client,
+                queue.queue_id,
+                ids,
+                [item.queue_item_id for item in order],
+                unchanged_playback,
+            )
+        except Exception:
+            # Moves can't be applied at once; put back the order the user had.
+            try:
+                await reorder(client, queue.queue_id, ids, original)
+            except Exception:
+                logger.exception("Could not restore the queue order after shuffling")
+            raise
+
+
+async def reorder(client, queue_id, ids, wanted, before_move=None):
+    """Move queue items until ids (kept up to date) matches the wanted order."""
+    for target, item_id in enumerate(wanted):
+        if before_move:
+            await before_move()
+        position = ids.index(item_id)
+        if position != target:
+            await client.player_queues.move_item(
+                queue_id, item_id, pos_shift=target - position
+            )
+            ids.insert(target, ids.pop(position))
 
 
 async def shuffle_album(player_id):
@@ -880,6 +944,22 @@ def resume_for_alexa(response, player):
     return response.set_should_end_session(True).response
 
 
+def repeated_play_next(request_id):
+    """The song an already handled delivery of this request queued, if any."""
+    with _play_next_lock:
+        now = time.monotonic()
+        for seen, (at, _song) in list(_recent_play_next.items()):
+            if now - at > PLAY_NEXT_REPEAT_SECONDS:
+                del _recent_play_next[seen]
+        return request_id and _recent_play_next.get(request_id, (None, None))[1]
+
+
+def remember_play_next(request_id, song):
+    if request_id:
+        with _play_next_lock:
+            _recent_play_next[request_id] = (time.monotonic(), song)
+
+
 def speaking_time(text):
     return len(text) / SPOKEN_CHARACTERS_PER_SECOND
 
@@ -955,8 +1035,14 @@ class VoiceMusicHandler(AbstractRequestHandler):
             return say(response, "Please say a song, artist, album or playlist name.")
 
         if name == "PlayNextIntent":
+            request_id = getattr(
+                handler_input.request_envelope.request, "request_id", None
+            )
+            if song := repeated_play_next(request_id):
+                return say(response, song + " will play next.")
             try:
                 song = run_now(lambda: play_next(player, query), 6)
+                remember_play_next(request_id, song)
             except ValueError as exc:
                 return say(response, str(exc))
             except Exception:

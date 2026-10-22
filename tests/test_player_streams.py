@@ -82,3 +82,13 @@ def test_pushed_player_id_wins_over_the_stream_url(client):
         "/kitchen-uuid.mp3"
     )
     assert shared_store.get_ma()["playerId"] == "Kitchen"
+
+
+def test_push_for_an_unknown_player_replaces_older_player_streams(client):
+    device_mapping.set_player_for_device("echo-1", "Echo Dot 1")
+    push(client, streamUrl="http://ma.local:8097/flow/s/q/i/Echo%20Dot%201.mp3")
+    push(client, streamUrl="http://ma.local:8097/stream/new-shape.mp3")
+    response = invoke(event("IntentRequest", device="echo-1", intent="PlayAudio"))
+    assert response["directives"][0]["audioItem"]["stream"]["url"].endswith(
+        "/stream/new-shape.mp3"
+    )
