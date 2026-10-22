@@ -113,6 +113,26 @@ def test_migration_holds_state_lock_during_derivation(tmp_path, monkeypatch):
     assert state_lock.acquisitions == 1
 
 
+def test_migration_locks_via_factory_before_registration(tmp_path, monkeypatch):
+    # The manager is not registered until the application finishes
+    # initialising, so an upgrade read during startup must still reach it
+    # through the factory rather than falling back to an unlocked context.
+    import skill_deployment
+
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    state.write_text(json.dumps({"phase": "complete", "skill_id": "verified"}))
+    state_lock = RecordingLock()
+    monkeypatch.setattr(
+        skill_deployment, "manager", lambda: SimpleNamespace(lock=state_lock)
+    )
+    app = Flask(__name__)  # the extension is deliberately left unregistered
+    with app.app_context():
+        assert access.get_allowed_skill_id() == "verified"
+    assert state_lock.acquisitions == 1
+    assert state_lock.held is False
+
+
 class PrivateAccessTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)

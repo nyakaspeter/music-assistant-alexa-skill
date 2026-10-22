@@ -8,7 +8,7 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 
-from flask import Response, current_app, request
+from flask import Response, request
 
 logger = logging.getLogger(__name__)
 
@@ -91,18 +91,22 @@ def get_allowed_skill_id():
 
 
 def _migration_lock():
-    """Lock deployment state while deriving access, when a manager exists.
+    """Hold the deployment state lock while deriving access, when available.
 
     Skill-deployment writes take the manager's lock, so holding it here makes
-    the state read and the skill-access.json write atomic against them. In
-    minimal setups without the skill-deployment extension there is nothing
-    concurrent to serialise against, and the migration stays unlocked.
+    the state read and the skill-access.json write atomic against them. The
+    lock is obtained through the manager factory rather than by reading the
+    extension directly, because the manager may not be registered yet while
+    the application is still initialising. Outside an application context
+    there is no manager to obtain and nothing concurrent to serialise
+    against, so the migration simply stays unlocked.
     """
+    from skill_deployment import manager
+
     try:
-        manager = current_app.extensions.get("skill_deployment")
+        return manager().lock
     except RuntimeError:  # Outside an application context.
-        manager = None
-    return manager.lock if manager is not None else nullcontext()
+        return nullcontext()
 
 
 def check_private_access():
