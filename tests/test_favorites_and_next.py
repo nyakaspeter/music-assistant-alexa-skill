@@ -275,7 +275,12 @@ def test_song_already_in_that_state_starts_no_background_work():
 
 def test_favorites_start_in_the_background():
     hi = handler_input("PlayFavoritesIntent")
-    selection = {"queue_id": "q", "media": ["a"], "radio": False}
+    selection = {
+        "queue_id": "q",
+        "media": ["a"],
+        "radio": False,
+        "announcement": "Playing your favorites.",
+    }
     with (
         patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
         patch.object(v, "prepare_music", AsyncMock(return_value=selection)) as prep,
@@ -284,7 +289,7 @@ def test_favorites_start_in_the_background():
         v.VoiceMusicHandler().handle(hi)
     prep.assert_awaited_once_with("echo", "", "favorites", recommended=False)
     thread.return_value.start.assert_called_once()
-    hi.response_builder.speak.assert_called_once_with("Starting your music.")
+    hi.response_builder.speak.assert_called_once_with("Playing your favorites.")
 
 
 def test_model_has_the_new_phrases():

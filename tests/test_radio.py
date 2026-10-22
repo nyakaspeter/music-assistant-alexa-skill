@@ -422,7 +422,7 @@ def test_music_resolves_before_starting_worker(intent):
 
     async def prepare(*args, **kwargs):
         events.append("resolve")
-        return {"media": "chosen"}
+        return {"media": "chosen", "announcement": "Playing Music."}
 
     with (
         patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
@@ -574,13 +574,22 @@ def test_success_announces_without_explicit_stop_directive(intent):
     with (
         patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
         patch.object(v, "prepare_radio", return_value=(station("Jazz"), "queue", None)),
-        patch.object(v, "prepare_music", return_value={"media": "chosen"}),
+        patch.object(
+            v,
+            "prepare_music",
+            return_value={"media": "chosen", "announcement": "Playing Song."},
+        ),
         patch.object(v.threading, "Thread"),
     ):
         response = v.VoiceMusicHandler().handle(hi)
     payload = DefaultSerializer().serialize(response)
     assert not payload.get("directives")
-    assert "Starting" in payload["outputSpeech"]["ssml"]
+    expected = (
+        "Starting Jazz."
+        if "Station" in intent or "Radio" in intent
+        else "Playing Song."
+    )
+    assert expected in payload["outputSpeech"]["ssml"]
     assert payload["shouldEndSession"] is True
 
 
@@ -626,7 +635,11 @@ def test_music_worker_waits_for_original_response_before_ma_play_request():
 
     with (
         patch.object(v.device_mapping, "get_player_for_device", return_value="echo"),
-        patch.object(v, "prepare_music", return_value={"media": "chosen"}),
+        patch.object(
+            v,
+            "prepare_music",
+            return_value={"media": "chosen", "announcement": "Playing Song."},
+        ),
         patch.object(v.asyncio, "sleep", side_effect=wait),
         patch.object(v, "play_music_selection", side_effect=play),
         patch.object(v.threading, "Thread") as thread,
@@ -635,8 +648,8 @@ def test_music_worker_waits_for_original_response_before_ma_play_request():
         assert events == []
         thread.call_args.kwargs["target"]()
     assert events == [
-        ("wait", v.speaking_time("Starting your music.")),
-        ("play", {"media": "chosen"}),
+        ("wait", v.speaking_time("Playing Song.")),
+        ("play", {"media": "chosen", "announcement": "Playing Song."}),
     ]
 
 
