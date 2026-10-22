@@ -23,15 +23,19 @@ EVENT_ACTIVITY = {
 
 _lock = threading.Lock()
 _reports = {}
+# The device that sends each player's playback events, i.e. the one actually playing.
+_playing_devices = {}
 
 
 def record(envelope):
     """Remember the Echo's stream offset and activity for its Music Assistant player."""
     request = envelope.request
     device = getattr(getattr(envelope.context, "system", None), "device", None)
-    player = device_mapping.get_player_for_device(getattr(device, "device_id", None))
+    device_id = getattr(device, "device_id", None)
+    player = device_mapping.get_player_for_device(device_id)
     activity = EVENT_ACTIVITY.get(getattr(request, "object_type", None))
-    if activity:
+    is_event = activity is not None
+    if is_event:
         token = getattr(request, "token", None)
         offset = getattr(request, "offset_in_milliseconds", None)
         # An Alexa speaker group sends its playback events under its own device ID,
@@ -47,6 +51,12 @@ def record(envelope):
     if not player or not token or offset is None or not activity:
         return
     with _lock:
+        if is_event:
+            _playing_devices[player] = device_id
+        elif _playing_devices.get(player, device_id) != device_id:
+            # A member of an Alexa speaker group reports its own idle player, not the
+            # group's playback, and the group sends no events around a voice request.
+            return
         _reports[player] = {
             "token": token,
             "offsetMs": offset,

@@ -12,6 +12,7 @@ ECHO_TOKEN = "https://streams.example.com/music" + FLOW + ".mp3"
 @pytest.fixture(autouse=True)
 def no_reports(monkeypatch):
     monkeypatch.setattr(echo_position, "_reports", {})
+    monkeypatch.setattr(echo_position, "_playing_devices", {})
 
 
 @pytest.fixture
@@ -123,3 +124,30 @@ def test_unmapped_voice_requests_are_still_ignored(playing):
         "playerId": "Echo Dot 1",
         "current": False,
     }
+
+
+def test_a_group_members_idle_player_does_not_pause_the_group(playing):
+    # The group plays and reports under its own ID; the member you talk to reports its own
+    # idle player ("STOPPED" at another offset), and the group sends no events around it.
+    invoke(event("AudioPlayer.PlaybackStarted", device="alexa-group", token=ECHO_TOKEN))
+    payload = event("IntentRequest", intent="WhatsPlayingIntent")
+    payload["context"]["AudioPlayer"].update(
+        token=ECHO_TOKEN, offsetInMilliseconds=8_604
+    )
+    payload["context"]["AudioPlayer"]["playerActivity"] = "STOPPED"
+    with patch.object(echo_position.time, "time", return_value=2000.0):
+        invoke(payload)
+    report = echo_position.report("Echo Dot 1")
+    assert (report["activity"], report["offsetMs"]) == ("PLAYING", 0)
+
+
+def test_a_single_echos_own_voice_request_still_counts(playing):
+    invoke(event("AudioPlayer.PlaybackStarted", token=ECHO_TOKEN, offset=1_000))
+    payload = event("IntentRequest", intent="WhatsPlayingIntent")
+    payload["context"]["AudioPlayer"].update(
+        token=ECHO_TOKEN, offsetInMilliseconds=20_000
+    )
+    payload["context"]["AudioPlayer"]["playerActivity"] = "STOPPED"
+    invoke(payload)
+    report = echo_position.report("Echo Dot 1")
+    assert (report["activity"], report["offsetMs"]) == ("STOPPED", 20_000)
