@@ -229,6 +229,12 @@ def _ingress_response(response):
     return response
 
 
+# Reject other skills before capturing request payloads.
+from private_access import check_private_access  # noqa: E402
+
+app.before_request(check_private_access)
+
+
 # Capture incoming Alexa POST payloads so we can show them on the status page
 def _payload_from_json_body():
     """Parse the Alexa payload from a JSON request body, if present."""
@@ -330,8 +336,15 @@ def invoke_skill():
             "X-Simulator-Signature"
         ):
             # Simulator bypass is available only to authenticated API users.
-            user = get_env_secret("APP_USERNAME")
-            password = get_env_secret("APP_PASSWORD")
+            try:
+                user = get_env_secret("APP_USERNAME")
+                password = get_env_secret("APP_PASSWORD")
+            except Exception:
+                # Without credentials there is nothing to authenticate
+                # against: deny instead of falling through to normal
+                # dispatch, which would skip this app-credential check.
+                app.logger.exception("Cannot read the simulator credentials")
+                return Response("Simulator authentication required", 403)
             auth = request.authorization
             if (
                 not user
