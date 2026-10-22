@@ -5,6 +5,7 @@ from skill_deployment import (
     ICON_URLS,
     DeploymentError,
     package_fingerprint,
+    package_fingerprints,
     package_mismatch,
     store_icon_assets,
 )
@@ -80,3 +81,10 @@ def test_icon_adoption_keeps_the_approved_naming():
     assert package_fingerprint(files) == package_fingerprint(
         amazon_export(**{ICON: b"re-encoded"})
     )
+
+
+def test_review_saved_before_the_upgrade_still_matches():
+    files = approved()
+    older = package_fingerprint(files, {key: key for key in files})
+    assert older != package_fingerprint(files)
+    assert older in package_fingerprints(files)

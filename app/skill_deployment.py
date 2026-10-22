@@ -244,15 +244,26 @@ def package_members(files):
     return members
 
 
-def package_fingerprint(files):
+def package_fingerprint(files, members=None):
     # ZIP metadata varies between exports; compare canonical member content.
     normalized = {}
-    for name, key in package_members(files).items():
+    for name, key in (members or package_members(files)).items():
         content = files[key]
         if name.endswith(".json"):
             content = canonical_json(content)
         normalized[name] = hashlib.sha256(content).hexdigest()
     return digest(json.dumps(normalized, sort_keys=True))
+
+
+def package_fingerprints(files):
+    """The fingerprint, and the one older versions saved with the wrapper in names.
+
+    A review saved before an upgrade holds the older form and must still match.
+    """
+    return {
+        package_fingerprint(files),
+        package_fingerprint(files, {key: key for key in files}),
+    }
 
 
 def _diff_key(key, left, right, path, differences, walk):
@@ -938,7 +949,7 @@ class DeploymentManager:
         skill = review["skill"]
         if skill:
             fresh, _ = self.export(skill)
-            if package_fingerprint(fresh) != self.state["baseline"]:
+            if self.state["baseline"] not in package_fingerprints(fresh):
                 raise DeploymentError(
                     "The skill changed in Amazon since the review. Prepare a new review to preserve those changes."
                 )
