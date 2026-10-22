@@ -84,6 +84,57 @@ def test_secret_files_bootstrap_but_web_secrets_are_literal(tmp_path, monkeypatc
     assert get_env_secret("MA_API_TOKEN") is None
 
 
+def _unreadable_secret_file(monkeypatch, name, tmp_path):
+    """Point `name` at a real path whose contents cannot be read."""
+    import env_secrets
+
+    secret = tmp_path / f"locked-{name}"
+    secret.write_text("the-real-secret")
+    monkeypatch.setenv(name, str(secret))
+    monkeypatch.setattr(env_secrets, "saved_secret", lambda n: (False, None))
+
+    def unavailable(path, *args, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(env_secrets.os.path, "isfile", lambda path: True)
+    monkeypatch.setattr("builtins.open", unavailable)
+    return env_secrets, secret
+
+
+def test_unreadable_secret_file_fails_closed(tmp_path, monkeypatch):
+    _env_secrets, secret = _unreadable_secret_file(
+        monkeypatch, "APP_USERNAME", tmp_path
+    )
+    value = get_env_secret("APP_USERNAME")
+    # The configured path must never become the credential, and the file
+    # contents must never leak through the error path either.
+    assert value != str(secret)
+    assert value != "the-real-secret"
+    assert value and len(value) >= 32
+    # Stable within the process, and distinct per secret name so a username
+    # and a password can never collapse into one guessable string.
+    assert get_env_secret("APP_USERNAME") == value
+    assert get_env_secret("APP_PASSWORD") != value
+
+
+def test_unreadable_secrets_reject_their_own_paths(monkeypatch, tmp_path):
+    # Docker secret paths are conventional and guessable, so a failed read
+    # must never leave the configured path usable as the credential.
+    import base64
+
+    from app import app, _check_app_basic_auth
+
+    _, user_path = _unreadable_secret_file(monkeypatch, "APP_USERNAME", tmp_path)
+    _, password_path = _unreadable_secret_file(monkeypatch, "APP_PASSWORD", tmp_path)
+    token = base64.b64encode(f"{user_path}:{password_path}".encode()).decode()
+    with app.test_request_context(
+        "/status", method="GET", headers={"Authorization": f"Basic {token}"}
+    ):
+        response = _check_app_basic_auth()
+        assert response is not None
+        assert response.status_code == 401
+
+
 @pytest.mark.parametrize(
     "changes",
     [

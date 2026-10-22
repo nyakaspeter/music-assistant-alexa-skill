@@ -336,8 +336,15 @@ def invoke_skill():
             "X-Simulator-Signature"
         ):
             # Simulator bypass is available only to authenticated API users.
-            user = get_env_secret("APP_USERNAME")
-            password = get_env_secret("APP_PASSWORD")
+            try:
+                user = get_env_secret("APP_USERNAME")
+                password = get_env_secret("APP_PASSWORD")
+            except Exception:
+                # Without credentials there is nothing to authenticate
+                # against: deny instead of falling through to normal
+                # dispatch, which would skip this app-credential check.
+                app.logger.exception("Cannot read the simulator credentials")
+                return Response("Simulator authentication required", 403)
             auth = request.authorization
             if (
                 not user

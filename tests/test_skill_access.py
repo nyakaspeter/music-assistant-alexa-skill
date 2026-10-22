@@ -1,5 +1,7 @@
 import json
+import logging
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import private_access
@@ -47,6 +49,88 @@ def test_corrupt_access_file_does_not_fall_back(tmp_path, monkeypatch):
     state.write_text(json.dumps({"phase": "complete", "skill_id": "old"}))
     access.access_path().write_text("invalid")
     assert access.get_allowed_skill_id() is None
+
+
+def test_unwritable_access_cache_does_not_deny_verified_skill(
+    tmp_path, monkeypatch, caplog
+):
+    # skill-access.json only caches what the deployment state already attests,
+    # and the ID is re-derived on every request. A cache write that fails
+    # (read-only or full data directory) must log the problem instead of
+    # turning an already verified installation into a 503.
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    state.write_text(json.dumps({"phase": "complete", "skill_id": "verified"}))
+
+    def deny(skill_id, state_path=None):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(access, "save_allowed_skill_id", deny)
+    with caplog.at_level(logging.WARNING, logger="private_access"):
+        assert access.get_allowed_skill_id() == "verified"
+    assert "Cannot persist the Alexa skill restriction" in caplog.text
+
+
+class RecordingLock:
+    """Stand-in for the deployment manager's state lock."""
+
+    def __init__(self):
+        self.held = False
+        self.acquisitions = 0
+
+    def __enter__(self):
+        self.held = True
+        self.acquisitions += 1
+        return self
+
+    def __exit__(self, *exc_info):
+        self.held = False
+        return False
+
+
+def test_migration_holds_state_lock_during_derivation(tmp_path, monkeypatch):
+    # A deploy can rewrite the deployment state between the migration's read
+    # and its derived write; the migration must hold the same lock as every
+    # deployment-state write so it cannot authorise an outdated skill ID.
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    state.write_text(json.dumps({"phase": "complete", "skill_id": "verified"}))
+    state_lock = RecordingLock()
+    held_during_save = []
+    real_save = access.save_allowed_skill_id
+
+    def spy(skill_id, state_path=None):
+        held_during_save.append(state_lock.held)
+        real_save(skill_id, state_path)
+
+    monkeypatch.setattr(access, "save_allowed_skill_id", spy)
+    app = Flask(__name__)
+    app.extensions["skill_deployment"] = SimpleNamespace(lock=state_lock)
+    with app.app_context():
+        assert access.get_allowed_skill_id() == "verified"
+    assert held_during_save == [True]
+    assert state_lock.held is False
+    assert state_lock.acquisitions == 1
+
+
+def test_migration_locks_via_factory_before_registration(tmp_path, monkeypatch):
+    # The manager is not registered until the application finishes
+    # initialising, so an upgrade read during startup must still reach it
+    # through the factory rather than falling back to an unlocked context.
+    import skill_deployment
+
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    state.write_text(json.dumps({"phase": "complete", "skill_id": "verified"}))
+    state_lock = RecordingLock()
+    monkeypatch.setattr(
+        skill_deployment, "manager", lambda: SimpleNamespace(lock=state_lock)
+    )
+    app = Flask(__name__)  # the extension is deliberately left unregistered
+    with app.app_context():
+        assert access.get_allowed_skill_id() == "verified"
+    assert state_lock.acquisitions == 1
+    assert state_lock.held is False
 
 
 class PrivateAccessTests(unittest.TestCase):
@@ -123,3 +207,19 @@ def test_simulator_still_requires_app_credentials(client):
     assert client.post("/", json=event(), headers=headers).status_code == 403
     response = client.post("/", json=event(), headers={**AUTH, **headers})
     assert response.status_code == 200
+
+
+def test_simulator_denied_when_app_credentials_unreadable(monkeypatch, client):
+    # The root POST endpoint is exempt from app-level auth, so a simulator
+    # request that cannot have its credentials read must be denied here
+    # rather than falling through to ordinary dispatch.
+    from test_playback import event
+
+    import app as app_module
+
+    def unreadable(name):
+        raise OSError("cannot read the secret file")
+
+    monkeypatch.setattr(app_module, "get_env_secret", unreadable)
+    response = client.post("/", json=event(), headers={"X-Simulator-Bypass": "true"})
+    assert response.status_code == 403

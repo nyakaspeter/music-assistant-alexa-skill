@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 from flask import Response, request
@@ -62,19 +63,50 @@ def get_allowed_skill_id():
     # verification the wizard actually recorded — "complete" marks
     # Amazon-confirmed enablement, and verified_at survives a wizard re-entry
     # (prepare keeps it) but is cleared whenever a new deployment is prepared
-    # (deploy) or only attested by the owner (reconcile).
+    # (deploy) or only attested by the owner (reconcile). The read and the
+    # derived write run under the deployment manager's lock so a concurrent
+    # deploy()/reconcile() cannot clear the verification between them and
+    # leave an outdated skill ID authorized.
     try:
-        state = json.loads(deployment_path().read_text())
-        value = state.get("skill_id")
-        if not isinstance(value, str) or not value:
-            return None
-        verified_at = state.get("verified_at")
-        if state.get("phase") == "complete" or isinstance(verified_at, (int, float)):
-            save_allowed_skill_id(value)
-            return value
+        with _migration_lock():
+            state = json.loads(deployment_path().read_text())
+            value = state.get("skill_id")
+            if not isinstance(value, str) or not value:
+                return None
+            verified_at = state.get("verified_at")
+            if state.get("phase") == "complete" or isinstance(
+                verified_at, (int, float)
+            ):
+                try:
+                    save_allowed_skill_id(value)
+                except OSError:
+                    # The state file is the authority; skill-access.json only
+                    # caches it and is re-derived on the next request. An
+                    # unwritable cache must not deny a verified skill.
+                    logger.warning("Cannot persist the Alexa skill restriction")
+                return value
     except (OSError, ValueError, AttributeError):
         pass
     return None
+
+
+def _migration_lock():
+    """Hold the deployment state lock while deriving access, when available.
+
+    Skill-deployment writes take the manager's lock, so holding it here makes
+    the state read and the skill-access.json write atomic against them. The
+    lock is obtained through the manager factory rather than by reading the
+    extension directly, because the manager may not be registered yet while
+    the application is still initialising. Outside an application context
+    there is no manager to obtain and nothing concurrent to serialise
+    against, so the migration simply stays unlocked.
+    """
+    from skill_deployment import manager
+
+    try:
+        return manager().lock
+    except RuntimeError:  # Outside an application context.
+        return nullcontext()
 
 
 def check_private_access():
