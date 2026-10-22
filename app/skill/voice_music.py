@@ -13,8 +13,15 @@ import aiohttp
 from ask_sdk_core.dispatch_components import AbstractRequestHandler
 from env_secrets import get_env_secret
 from music_assistant_client import MusicAssistantClient
+from music_assistant_client.exceptions import InvalidServerVersion, TransportError
 from music_assistant_models.enums import MediaType, QueueOption
-from music_assistant_models.errors import MediaNotFoundError, MusicAssistantError
+from music_assistant_models.errors import (
+    AuthenticationFailed,
+    AuthenticationRequired,
+    InvalidToken,
+    MediaNotFoundError,
+    MusicAssistantError,
+)
 
 from . import device_mapping, playback_requests
 
@@ -830,11 +837,25 @@ def music_assistant_configured():
     return bool(get_env_secret("MA_API_URL") and get_env_secret("MA_API_TOKEN"))
 
 
+# MA can't be reached or won't let the skill in; the stored stream may still play.
+MA_UNREACHABLE = (
+    TransportError,
+    InvalidServerVersion,
+    AuthenticationRequired,
+    AuthenticationFailed,
+    InvalidToken,
+    aiohttp.ClientError,
+    OSError,
+    TimeoutError,
+)
+
+
 def resume_for_alexa(response, player):
     """Alexa's own resume: continue the MA queue silently, with a fresh stream.
 
     The stream the Echo had before may be gone after a break, and MA's play button for
-    this player also arrives here, while MA already reports it as playing.
+    this player also arrives here, while MA already reports it as playing. Returns
+    None when MA can't be reached, so the caller can replay the stored stream instead.
     """
     try:
         queue_id, _current = run_now(
@@ -842,6 +863,9 @@ def resume_for_alexa(response, player):
         )
     except ValueError as exc:
         return say(response, str(exc))
+    except MA_UNREACHABLE:
+        logger.warning("Music Assistant unreachable; resuming the stored stream")
+        return None
     except Exception:
         logger.exception("Resume failed")
         return say(

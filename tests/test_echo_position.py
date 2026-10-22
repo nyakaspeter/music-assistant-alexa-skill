@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from skill import device_mapping, echo_position
+from skill import device_mapping, echo_position, playback_requests
 from test_playback import AUTH, event, invoke, push
 
 FLOW = "/flow/session/queue/item/Echo%20Dot%201"
@@ -151,3 +151,19 @@ def test_a_single_echos_own_voice_request_still_counts(playing):
     invoke(payload)
     report = echo_position.report("Echo Dot 1")
     assert (report["activity"], report["offsetMs"]) == ("STOPPED", 20_000)
+
+
+def test_report_that_arrives_late_does_not_replace_a_newer_one(playing):
+    newer = event("AudioPlayer.PlaybackStarted", token=ECHO_TOKEN, offset=90_500)
+    older = event("AudioPlayer.PlaybackStopped", token=ECHO_TOKEN, offset=80_000)
+    older["request"]["timestamp"] = "2026-10-02T19:59:58Z"
+    invoke(newer)
+    invoke(older)
+    report = echo_position.report("Echo Dot 1")
+    assert (report["offsetMs"], report["activity"]) == (90_500, "PLAYING")
+
+
+def test_button_pause_cancels_a_start_pending_after_an_answer(playing):
+    ticket = playback_requests.begin("Echo Dot 1")
+    invoke(event("PlaybackController.PauseCommandIssued"))
+    assert not playback_requests.current(ticket)

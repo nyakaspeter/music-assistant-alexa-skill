@@ -516,9 +516,11 @@ class ResumeIntentHandler(AbstractRequestHandler):
 
         player_id = device_mapping.get_player_for_device(device_id)
         if player_id and voice_music.music_assistant_configured():
-            return voice_music.resume_for_alexa(
+            resumed = voice_music.resume_for_alexa(
                 handler_input.response_builder, player_id
             )
+            if resumed is not None:
+                return resumed
 
         _sync_to_ma_unless_echo(handler_input, "resume")
 
@@ -876,6 +878,10 @@ class PauseCommandHandler(AbstractRequestHandler):
     def handle(self, handler_input):
         # type: (HandlerInput) -> Response
         logger.info("In PauseCommandHandler")
+        player_id = device_mapping.get_player_for_device(_device_id_from(handler_input))
+        if player_id:
+            # A start still pending after a spoken answer must not override the button.
+            playback_requests.begin(player_id)
         return util.stop(text=None, response_builder=handler_input.response_builder)
 
 
@@ -951,7 +957,10 @@ class RequestLogger(AbstractRequestInterceptor):
                 intent_slots = getattr(request.intent, "slots", None)
                 if intent_slots:
                     for slot_key, slot_obj in intent_slots.items():
-                        slots[slot_key] = getattr(slot_obj, "value", None)
+                        value = getattr(slot_obj, "value", None)
+                        slots[slot_key] = (
+                            None if value is None else _sanitize_log_value(value)
+                        )
 
                 logger.info("Incoming Intent: %s - Slots: %s", intent_name, slots)
             else:

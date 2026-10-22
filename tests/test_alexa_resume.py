@@ -1,6 +1,9 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import shared_store
+from music_assistant_client.exceptions import CannotConnect
+from music_assistant_models.errors import InvalidToken, MusicAssistantError
 from skill import device_mapping, ma_control
 from skill import voice_music as v
 from test_playback import event, invoke
@@ -56,3 +59,37 @@ def test_resume_without_music_assistant_keeps_the_stream_replay(monkeypatch):
     with patch.object(v, "prepare_resume") as prepare:
         resume()
     prepare.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [CannotConnect("ma:8095"), InvalidToken("rotated"), TimeoutError()],
+)
+def test_resume_replays_the_stored_stream_when_music_assistant_is_unreachable(
+    mapped, error
+):
+    shared_store.set_ma(
+        {
+            "streamUrl": "https://streams.example.com/flow/s/q/i/Echo%20Dot%201.mp3",
+            "playerId": "Echo Dot 1",
+        }
+    )
+    with (
+        patch.object(v, "prepare_resume", AsyncMock(side_effect=error)),
+        patch.object(ma_control, "send_player_command", return_value=False),
+        patch.object(v.threading, "Thread") as thread,
+    ):
+        response = resume()
+    thread.assert_not_called()
+    play = response["directives"][0]
+    assert play["type"] == "AudioPlayer.Play"
+    assert play["audioItem"]["stream"]["url"].endswith("/Echo%20Dot%201.mp3")
+
+
+def test_resume_refused_by_music_assistant_is_not_replayed(mapped):
+    with patch.object(
+        v, "prepare_resume", AsyncMock(side_effect=MusicAssistantError("busy"))
+    ):
+        response = resume()
+    assert "could not resume" in response["outputSpeech"]["ssml"]
+    assert not response.get("directives")

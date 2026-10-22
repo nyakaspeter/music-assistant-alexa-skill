@@ -50,7 +50,12 @@ def record(envelope):
         )
     if not player or not token or offset is None or not activity:
         return
+    # Alexa's own send time orders reports that arrive out of order.
+    sent_at = getattr(request, "timestamp", None)
     with _lock:
+        latest = _reports.get(player)
+        if latest and sent_at and latest["sentAt"] and sent_at < latest["sentAt"]:
+            return
         if is_event:
             _playing_devices[player] = device_id
         elif _playing_devices.get(player, device_id) != device_id:
@@ -62,6 +67,7 @@ def record(envelope):
             "offsetMs": offset,
             "activity": activity,
             "observedAt": time.time(),
+            "sentAt": sent_at,
         }
 
 

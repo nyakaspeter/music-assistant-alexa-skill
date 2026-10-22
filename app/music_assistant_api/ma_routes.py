@@ -42,6 +42,9 @@ def register_routes(bp):
                 "artist": payload.get("artist"),
                 "album": payload.get("album"),
                 "imageUrl": image_url,
+                "playerId": payload.get("playerId")
+                if isinstance(payload.get("playerId"), str)
+                else None,
             }
         )
         return jsonify({"status": "ok", "version": version})

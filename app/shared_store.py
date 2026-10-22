@@ -27,7 +27,8 @@ def set_ma(payload):
     with _lock:
         _version += 1
         _ma = deepcopy(payload)
-        player = player_from_stream(payload.get("streamUrl"))
+        # Newer MA versions name the player; older ones only in the stream URL.
+        player = payload.get("playerId") or player_from_stream(payload.get("streamUrl"))
         _ma.update(playerId=player, version=_version, timestamp=time.time())
         if player and payload.get("streamUrl"):
             _player_snapshots[player] = deepcopy(_ma)
