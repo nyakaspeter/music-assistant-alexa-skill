@@ -168,7 +168,9 @@ async def test_unavailable_exact_song_is_not_substituted_for_wrong_artist(
 async def test_recommendation_choice_is_the_opening_song(playback_client, monkeypatch):
     client = playback_client
     monkeypatch.setattr(
-        v, "recommended_seed", AsyncMock(return_value="provider://track/recommended")
+        v,
+        "recommended_seed",
+        AsyncMock(return_value=("provider://track/recommended", "Song by Artist")),
     )
     prepared = await v.prepare_music("echo", recommended=True)
     await v.play_music_selection(prepared)

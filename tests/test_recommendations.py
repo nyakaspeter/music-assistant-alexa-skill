@@ -24,7 +24,7 @@ class RecommendationTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         with patch.object(v.random, "choice", side_effect=lambda xs: xs[-1]):
-            self.assertEqual(await v.recommended_seed(c), "two")
+            self.assertEqual((await v.recommended_seed(c))[0], "two")
         self.assertEqual(c.send_command.call_args.kwargs["provider"], "spotify--1")
 
     async def test_failed_row_falls_back_to_favorites(self):
@@ -39,7 +39,7 @@ class RecommendationTests(unittest.IsolatedAsyncioTestCase):
             ),
             send_command=AsyncMock(side_effect=ProviderUnavailableError("offline")),
         )
-        self.assertEqual(await v.recommended_seed(c), "local://track/1")
+        self.assertEqual((await v.recommended_seed(c))[0], "local://track/1")
         self.assertTrue(c.music.get_library_tracks.call_args.kwargs["favorite"])
 
     async def test_empty_recommendations_and_library_fail(self):
@@ -68,7 +68,9 @@ class RecommendationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(v, "MusicAssistantClient", return_value=manager),
             patch.object(v, "get_env_secret", return_value="configured"),
             patch.object(
-                v, "recommended_seed", AsyncMock(return_value="spotify://track/seed")
+                v,
+                "recommended_seed",
+                AsyncMock(return_value=("spotify://track/seed", None)),
             ),
         ):
             await v.play_recommended("Echo Dot 3")
@@ -97,7 +99,9 @@ class RecommendationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(v, "MusicAssistantClient", return_value=manager),
             patch.object(v, "get_env_secret", return_value="configured"),
             patch.object(
-                v, "recommended_seed", AsyncMock(return_value="local://track/seed")
+                v,
+                "recommended_seed",
+                AsyncMock(return_value=("local://track/seed", None)),
             ),
             patch.object(
                 v,
@@ -153,7 +157,7 @@ class RecommendationPoolTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             v.random, "choice", side_effect=lambda pool: pool[-1]
         ) as choice:
-            self.assertEqual(await v.recommended_seed(c), "d")
+            self.assertEqual((await v.recommended_seed(c))[0], "d")
         self.assertEqual(choice.call_args.args[0], ["a", "b", "c", "d"])
         self.assertEqual(choice.call_count, 1)
         self.assertEqual(c.send_command.await_count, 4)
@@ -227,6 +231,6 @@ class RecommendationPoolTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             v.random, "choice", side_effect=lambda pool: pool[-1]
         ) as choice:
-            self.assertEqual(await v.recommended_seed(c), "7")
+            self.assertEqual((await v.recommended_seed(c))[0], "7")
         self.assertEqual(choice.call_args.args[0], [str(i) for i in range(8)])
         self.assertEqual(c.send_command.await_count, 8)

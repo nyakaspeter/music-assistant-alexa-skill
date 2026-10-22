@@ -124,16 +124,36 @@ async def active_queue(client, player_id):
     return queue
 
 
+def artist_names(item):
+    return ", ".join(a.name for a in getattr(item, "artists", None) or [] if a.name)
+
+
+def announce(kind, item):
+    """Say what was found, so a different match than intended is noticed right away."""
+    artists = artist_names(item)
+    by = " by " + artists if artists else ""
+    return {
+        "track": "Playing " + item.name + by,
+        "album": "Playing the album " + item.name + by,
+        "artist": "Playing songs by " + item.name,
+        "playlist": "Playing your playlist " + item.name,
+    }[kind] + "."
+
+
 async def prepare_music(player_id, query="", kind="track", recommended=False):
     """Resolve without changing playback, while Alexa can report search errors."""
     async with connection() as client:
         queue = await active_queue(client, player_id)
         if recommended:
-            media = await recommended_seed(client)
-            name = "your music"
+            media, label = await recommended_seed(client)
+            name = label or "your music"
+            announcement = (
+                "Playing " + label + "." if label else "Playing your recommendations."
+            )
         elif kind == "favorites":
             media = await favorite_tracks(client)
             name = "your favorites"
+            announcement = "Playing your favorites."
         else:
             if kind == "playlist":
                 playlists = await client.music.get_library_playlists(
@@ -147,6 +167,7 @@ async def prepare_music(player_id, query="", kind="track", recommended=False):
                 item = await find_music(client, query, kind)
             name = item.name
             media = item.uri
+            announcement = announce(kind, item)
             if kind == "artist":
                 tracks = await client.music.get_artist_tracks(
                     item.item_id, item.provider
@@ -160,6 +181,7 @@ async def prepare_music(player_id, query="", kind="track", recommended=False):
             "queue_id": queue.queue_id,
             "media": media,
             "name": name,
+            "announcement": announcement,
             "radio": recommended or kind == "track",
             "recommended": recommended,
         }
@@ -294,7 +316,8 @@ async def plan_song_change(player_id, collection, add):
     return action.format(track.name) + f" your {collection}.", change
 
 
-async def library_selection(client):
+async def library_tracks(client):
+    """Random available favorites, or else random library tracks."""
     for favorite in (True, None):
         tracks = await client.music.get_library_tracks(
             favorite=favorite, limit=50, order_by="random"
@@ -302,8 +325,12 @@ async def library_selection(client):
         tracks = [track for track in tracks if getattr(track, "available", True)]
         if tracks:
             random.shuffle(tracks)
-            return [track.uri for track in tracks]
+            return tracks
     return []
+
+
+async def library_selection(client):
+    return [track.uri for track in await library_tracks(client)]
 
 
 def recommendation_identities(track):
@@ -360,8 +387,15 @@ def unique_recommendations(tracks):
     return list(songs.values())
 
 
+def song_label(name, artists):
+    """'Song by Artist', just the song without artists, or None without a name."""
+    if not name:
+        return None
+    return name + " by " + artists if artists else name
+
+
 async def recommended_seed(client):
-    """Uniform choice from all unique playable recommendation songs."""
+    """Uniform choice from all unique playable recommendation songs: (uri, label)."""
     rows = await client.music.recommendations()
     tracks = []
     # Without a background listener this short-lived MA client receives each
@@ -384,10 +418,16 @@ async def recommended_seed(client):
             logger.warning("Skipping unavailable recommendation row")
     pool = unique_recommendations(tracks)
     if pool:
-        return random.choice(pool)
-    tracks = await library_selection(client)
+        uri = random.choice(pool)
+        track = next(track for track in tracks if track["uri"] == uri)
+        artists = ", ".join(
+            artist["name"] for artist in track.get("artists", []) if artist.get("name")
+        )
+        return uri, song_label(track.get("name"), artists)
+    tracks = await library_tracks(client)
     if tracks:
-        return random.choice(tracks)
+        track = random.choice(tracks)
+        return track.uri, song_label(getattr(track, "name", None), artist_names(track))
     raise ValueError(
         "Music Assistant has no recommended songs or library tracks available right now."
     )
@@ -1005,6 +1045,6 @@ class VoiceMusicHandler(AbstractRequestHandler):
         return start_after_answer(
             player,
             response,
-            "Starting your music.",
+            selection["announcement"],
             lambda: play_music_selection(selection),
         )
