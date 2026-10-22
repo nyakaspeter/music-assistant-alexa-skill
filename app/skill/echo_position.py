@@ -30,12 +30,13 @@ def record(envelope):
     request = envelope.request
     device = getattr(getattr(envelope.context, "system", None), "device", None)
     player = device_mapping.get_player_for_device(getattr(device, "device_id", None))
-    if not player:
-        return
     activity = EVENT_ACTIVITY.get(getattr(request, "object_type", None))
     if activity:
         token = getattr(request, "token", None)
         offset = getattr(request, "offset_in_milliseconds", None)
+        # An Alexa speaker group sends its playback events under its own device ID,
+        # which is not mapped; the stream URL names the player it was pushed for.
+        player = player or shared_store.player_from_stream(token)
     else:
         audio_player = getattr(envelope.context, "audio_player", None)
         token = getattr(audio_player, "token", None)
@@ -43,7 +44,7 @@ def record(envelope):
         activity = getattr(
             getattr(audio_player, "player_activity", None), "value", None
         )
-    if not token or offset is None or not activity:
+    if not player or not token or offset is None or not activity:
         return
     with _lock:
         _reports[player] = {
