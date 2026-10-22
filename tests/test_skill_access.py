@@ -24,6 +24,23 @@ def test_upgrade_trusts_only_completed_deployment(tmp_path, monkeypatch):
     assert json.loads(access.access_path().read_text()) == {"skill_id": "verified"}
 
 
+def test_upgrade_trusts_surviving_verification_beyond_complete(tmp_path, monkeypatch):
+    state = tmp_path / "state.json"
+    monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
+    # A wizard re-entry after a successful deploy leaves phase "ready" but
+    # keeps verified_at — that skill was verified, so the upgrade must not
+    # strand the install into 503.
+    state.write_text(
+        json.dumps({"phase": "ready", "skill_id": "verified", "verified_at": 1.0})
+    )
+    assert access.get_allowed_skill_id() == "verified"
+    # Reconcile clears verified_at (owner attestation is not API verification);
+    # without a surviving verification the migration stays fail-closed.
+    access.access_path().unlink()
+    state.write_text(json.dumps({"phase": "reconciled", "skill_id": "attested"}))
+    assert access.get_allowed_skill_id() is None
+
+
 def test_corrupt_access_file_does_not_fall_back(tmp_path, monkeypatch):
     state = tmp_path / "state.json"
     monkeypatch.setenv("SKILL_DEPLOYMENT_PATH", str(state))
@@ -65,6 +82,29 @@ class PrivateAccessTests(unittest.TestCase):
     def test_fail_closed(self):
         self.skill = None
         self.assertEqual(self.invoke().status_code, 503)
+
+    def test_malformed_shapes_and_non_ascii_are_denied(self):
+        # Hostile bodies must be plain 403s, never unhandled 500s.
+        with patch.object(
+            private_access, "get_allowed_skill_id", return_value=self.skill
+        ):
+            self.assertEqual(
+                self.client.post("/", json={"context": "x"}).status_code, 403
+            )
+            self.assertEqual(
+                self.client.post("/", json={"session": "x"}).status_code, 403
+            )
+            self.assertEqual(
+                self.client.post(
+                    "/",
+                    json={
+                        "context": {
+                            "System": {"application": {"applicationId": "café"}}
+                        }
+                    },
+                ).status_code,
+                403,
+            )
 
     def test_simulator_skips_skill_check_for_app_auth_to_decide(self):
         self.assertEqual(
