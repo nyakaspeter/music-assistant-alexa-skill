@@ -211,6 +211,41 @@ class VoiceQueueTests(unittest.IsolatedAsyncioTestCase):
             await self.run_with(NS(player_queues=pq), lambda: v.shuffle_album("echo"))
         pq.move_item.assert_not_awaited()
 
+    async def test_failed_shuffle_puts_the_order_back(self):
+        album = NS(uri="provider://album/1", media_type=v.MediaType.ALBUM)
+        items = [track(str(i), album=album, index=i) for i in range(5)]
+        q = NS(
+            queue_id="echo",
+            current_index=0,
+            index_in_buffer=0,
+            items=5,
+            current_item=items[0],
+            sources=[album],
+            is_dynamic=False,
+            shuffle_enabled=False,
+        )
+        stored = items[:]
+        moves = []
+
+        async def move(queue_id, item_id, pos_shift):
+            moves.append(item_id)
+            if len(moves) == 2:
+                raise v.MusicAssistantError("lost")
+            old = next(i for i, x in enumerate(stored) if x.queue_item_id == item_id)
+            stored.insert(old + pos_shift, stored.pop(old))
+
+        pq = NS(
+            get_active_queue=AsyncMock(return_value=q),
+            get_queue_items=AsyncMock(return_value=items[1:]),
+            move_item=AsyncMock(side_effect=move),
+        )
+        with (
+            patch.object(v.random, "shuffle", side_effect=lambda xs: xs.reverse()),
+            self.assertRaises(v.MusicAssistantError),
+        ):
+            await self.run_with(NS(player_queues=pq), lambda: v.shuffle_album("echo"))
+        self.assertEqual([i.name for i in stored], ["0", "1", "2", "3", "4"])
+
     async def test_title_containing_by_is_not_mistaken_for_artist(self):
         song = NS(name="Stand by Me", artists=[NS(name="Ben E King")])
         client = NS(music=NS(search=AsyncMock(return_value=NS(tracks=[song]))))
