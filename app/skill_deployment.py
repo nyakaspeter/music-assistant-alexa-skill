@@ -228,14 +228,42 @@ def canonical_json(content):
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
 
 
-def package_fingerprint(files):
+def package_members(files):
+    """Map each member's name without Amazon's skill-package/ wrapper to its key.
+
+    Amazon exports the package with or without one leading skill-package/
+    folder. Two members that differ only by that wrapper would compare as
+    one file, letting either hide the other, so such a package is refused.
+    """
+    members = {}
+    for key in files:
+        name = key.removeprefix("skill-package/")
+        if name in members:
+            raise DeploymentError(f"The skill package holds {name} twice.")
+        members[name] = key
+    return members
+
+
+def package_fingerprint(files, members=None):
     # ZIP metadata varies between exports; compare canonical member content.
     normalized = {}
-    for key, content in files.items():
-        if key.endswith(".json"):
+    for name, key in (members or package_members(files)).items():
+        content = files[key]
+        if name.endswith(".json"):
             content = canonical_json(content)
-        normalized[key] = hashlib.sha256(content).hexdigest()
+        normalized[name] = hashlib.sha256(content).hexdigest()
     return digest(json.dumps(normalized, sort_keys=True))
+
+
+def package_fingerprints(files):
+    """The fingerprint, and the one older versions saved with the wrapper in names.
+
+    A review saved before an upgrade holds the older form and must still match.
+    """
+    return {
+        package_fingerprint(files),
+        package_fingerprint(files, {key: key for key in files}),
+    }
 
 
 def _diff_key(key, left, right, path, differences, walk):
@@ -270,13 +298,13 @@ def _json_diff(approved, actual, limit=6):
     return differences
 
 
-def _json_file_differences(name, approved, actual):
+def _json_file_differences(approved, actual):
     """Per-file differences for two JSON members; empty when equivalent."""
     try:
-        if canonical_json(approved[name]) == canonical_json(actual[name]):
+        if canonical_json(approved) == canonical_json(actual):
             return []  # only formatting or materialized icons differ
-        left = json.loads(approved[name])
-        right = json.loads(actual[name])
+        left = json.loads(approved)
+        right = json.loads(actual)
         normalize_icons(left)
         normalize_icons(right)
         return _json_diff(left, right)
@@ -287,19 +315,27 @@ def _json_file_differences(name, approved, actual):
 def package_mismatch(approved, actual):
     """Describe per-file differences between two unpacked skill packages."""
     report = {}
-    for name in sorted(set(approved) | set(actual)):
-        if name not in approved:
-            report[name] = ["file exists only in Amazon's export"]
-        elif name not in actual:
-            report[name] = ["file missing from Amazon's export"]
-        elif approved[name] == actual[name]:
+    approved_members = package_members(approved)
+    actual_members = package_members(actual)
+    for name in sorted(set(approved_members) | set(actual_members)):
+        # Report under the approved package's name for the member.
+        key = approved_members.get(name) or actual_members[name]
+        if name not in approved_members:
+            report[key] = ["file exists only in Amazon's export"]
             continue
-        elif name.endswith(".json"):
-            differences = _json_file_differences(name, approved, actual)
+        if name not in actual_members:
+            report[key] = ["file missing from Amazon's export"]
+            continue
+        left = approved[approved_members[name]]
+        right = actual[actual_members[name]]
+        if left == right:
+            continue
+        if name.endswith(".json"):
+            differences = _json_file_differences(left, right)
             if differences:
-                report[name] = differences
+                report[key] = differences
         else:
-            report[name] = ["file bytes differ"]
+            report[key] = ["file bytes differ"]
     return report
 
 
@@ -314,14 +350,19 @@ def store_icon_assets(approved, actual):
     other member keeps byte-for-byte verification.
     """
     stored = []
-    for name, content in actual.items():
-        if ICON_ASSET_MARKER in name and approved.get(name) != content:
-            approved[name] = content
-            stored.append(name)
-    for name in sorted(approved):
-        if ICON_ASSET_MARKER in name and name not in actual:
-            del approved[name]
-            stored.append(name)
+    approved_members = package_members(approved)
+    actual_members = package_members(actual)
+    for name, key in actual_members.items():
+        # Replace an approved member in place, wrapper or not, so the
+        # package never holds the same artwork under two names.
+        target = approved_members.get(name, key)
+        if ICON_ASSET_MARKER in name and approved.get(target) != actual[key]:
+            approved[target] = actual[key]
+            stored.append(target)
+    for name, key in sorted(approved_members.items()):
+        if ICON_ASSET_MARKER in name and name not in actual_members:
+            del approved[key]
+            stored.append(key)
     return sorted(stored)
 
 
@@ -908,7 +949,7 @@ class DeploymentManager:
         skill = review["skill"]
         if skill:
             fresh, _ = self.export(skill)
-            if package_fingerprint(fresh) != self.state["baseline"]:
+            if self.state["baseline"] not in package_fingerprints(fresh):
                 raise DeploymentError(
                     "The skill changed in Amazon since the review. Prepare a new review to preserve those changes."
                 )
@@ -1231,6 +1272,14 @@ class DeploymentManager:
         enabled = self.api("GET", path + "/stages/development/enablement")
         if enabled.status_code != 204:
             raise DeploymentError("Amazon did not confirm development enablement.")
+        from private_access import save_allowed_skill_id
+
+        try:
+            save_allowed_skill_id(skill, self.path)
+        except OSError as exc:
+            raise DeploymentError(
+                "Could not save the skill restriction. Check data-directory permissions and resume deployment."
+            ) from exc
         self.update(
             phase="complete",
             message="Amazon confirmed the import, approved package, endpoint and development enablement. Test playback on your Echo.",
